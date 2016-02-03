@@ -8,7 +8,7 @@ import qualified HexGrid as Grid
 import Piece
 import Board (Board, isOccupiedAt, isNotOccupiedAt, occupiedNeighbors, piecesAt, topPieceAt, removePiecesAt, removeTopPieceAt)
 
--- game engine
+-- Start with the types!
 
 data Game = Game { gameId :: Integer -- TODO: fancier ID type?
                  , gametitle :: String
@@ -26,46 +26,6 @@ data Move = Move { movePiece :: Piece
                  , moveCoords :: AxialPoint
                  -- , moveName :: String -- e.g. "bA2 /wG1"
                  } deriving (Eq,Show)
-
--- | the set of all possible pieces.
-allPieces :: [Piece]
-allPieces = map pieceFromName
-             ["bA1","bA2","bA3"
-             ,"bB1","bB2"
-             ,"bG1","bG2","bG3"
-             ,"bL"
-             ,"bM"
-             ,"bP"
-             ,"bQ"
-             ,"bS1","bS2"
-             ,"wA1","wA2","wA3"
-             ,"wB1","wB2"
-             ,"wG1","wG2","wG3"
-             ,"wL"
-             ,"wM"
-             ,"wP"
-             ,"wQ"
-             ,"wS1","wS2"
-             ]
-
-pieceFromName :: String -> Piece
-pieceFromName name = Piece species team name
-  where
-    t:s:_ = name
-    team = case t of
-              'b' -> Black
-              'w' -> White
-              _   -> error "pieceFromName: invalid team"
-    species = case s of
-                'A' -> Ant
-                'B' -> Beetle
-                'G' -> Grasshopper
-                'L' -> Ladybug
-                'M' -> Mosquito
-                'P' -> Pillbug
-                'Q' -> QueenBee
-                'S' -> Spider
-                _   -> error "pieceFromName: invalid species"
 
 -- allowedMoves :: Board -> Piece -> Graph.AxialPoint -> [Move]
 -- allowedMoves board (Piece QueenBee _ _) pos
@@ -146,4 +106,5 @@ spiderMoves board pq = do
     guard $ isPlanarPassible board nabe2 nabe3
     return nabe3
 
--- TODO: dispatch on the Species type to the above handlers
+-- TODO: a thingy dispatch on the Species type to the above handlers
+

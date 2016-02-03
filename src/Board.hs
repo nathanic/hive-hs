@@ -1,4 +1,4 @@
-module Board 
+module Board
     (Board
     , isOccupiedAt
     , isNotOccupiedAt
@@ -6,7 +6,7 @@ module Board
     , topPieceAt
     , piecesAt
     , removePiecesAt
-    , removeTopPieceAt) 
+    , removeTopPieceAt)
     where
 
 import Piece
@@ -30,10 +30,10 @@ removePiecesAt :: Board -> AxialPoint -> Board
 removePiecesAt (Board board) pq = Board $ Map.delete pq board
 
 removeTopPieceAt :: Board -> AxialPoint -> Board
-removeTopPieceAt (Board board) pq = Board $ Map.adjust safeTail pq board
-  where 
-    safeTail []     = []
-    safeTail (_:xs) = xs
+removeTopPieceAt (Board board) pq = Board $ Map.update tailOrDeath pq board
+  where
+    tailOrDeath []     = Nothing -- don't retain empty lists
+    tailOrDeath (_:xs) = Just xs
 
 topPieceAt :: Board -> AxialPoint -> Maybe Piece
 topPieceAt board pq = listToMaybe $ board `piecesAt` pq
@@ -41,7 +41,7 @@ topPieceAt board pq = listToMaybe $ board `piecesAt` pq
 isOccupiedAt :: Board -> AxialPoint -> Bool
 isOccupiedAt board pq = not . null $ board `piecesAt` pq
 
-isNotOccupiedAt board pq = not $ board `isOccupiedAt` pq
+isNotOccupiedAt = (not .) . isOccupiedAt
 
 occupiedNeighbors :: Board -> AxialPoint -> [AxialPoint]
 occupiedNeighbors board pq = filter (board `isOccupiedAt`) $ Grid.neighbors pq

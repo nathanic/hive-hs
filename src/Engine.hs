@@ -2,26 +2,13 @@ module Engine where
 
 import Control.Monad (guard)
 import Data.Map.Strict (Map)
-import Data.Maybe (isJust)
+
 import HexGrid (AxialPoint)
-import qualified Data.Map.Strict as Map
 import qualified HexGrid as Grid
+import Piece
+import Board (Board, isOccupiedAt, isNotOccupiedAt, occupiedNeighbors, piecesAt, topPieceAt, removePiecesAt, removeTopPieceAt)
 
 -- game engine
-
-data Species = Ant | Beetle | Grasshopper | Ladybug | Mosquito | Pillbug | QueenBee | Spider
-  deriving (Eq,Show)
-
-data Team = White | Black
-  deriving (Eq,Show)
-
-data Piece = Piece
-    { pieceSpecies :: Species
-    , pieceTeam :: Team
-    , pieceName :: String
-    } deriving (Eq,Show)
-
-type Board = Map AxialPoint [Piece]
 
 data Game = Game { gameId :: Integer -- TODO: fancier ID type?
                  , gametitle :: String
@@ -83,13 +70,6 @@ pieceFromName name = Piece species team name
 -- allowedMoves :: Board -> Piece -> Graph.AxialPoint -> [Move]
 -- allowedMoves board (Piece QueenBee _ _) pos
 
-isOccupiedAt :: Board -> AxialPoint -> Bool
-isOccupiedAt board pq = isJust $ Map.lookup pq board
-
-isNotOccupiedAt board pq = not $ board `isOccupiedAt` pq
-
-occupiedNeighbors :: Board -> AxialPoint -> [AxialPoint]
-occupiedNeighbors board pq = filter (board `isOccupiedAt`) $ Grid.neighbors pq
 
 -- | determine if two adjacent positions are planar-passable (not gated)
 -- | NOTE: only considers the bottommost plane! does not consider movement atop the hive
@@ -102,12 +82,20 @@ isPlanarPassible board pqFrom pqTo =
         `xor` (board' `isOccupiedAt` gate2))
   where
     -- board' removes considered piece from the board
-    board' = Map.delete pqFrom board 
+    board' = board `removePiecesAt` pqFrom
     (gate1,gate2) = Grid.gatePositions pqFrom pqTo
     xor = (/=)
 
 planarPassibleNeighbors :: Board -> AxialPoint -> [AxialPoint]
 planarPassibleNeighbors board pq = filter (isPlanarPassible board pq) $ Grid.neighbors pq
+
+
+antMoves :: Board -> AxialPoint -> [AxialPoint]
+antMoves = undefined
+-- this one involves some graph theory
+-- probably have to look into fgl
+-- convert board into graph
+-- then successors query etc.
 
 beetleMoves :: Board -> AxialPoint -> [AxialPoint]
 beetleMoves board pq =
@@ -123,6 +111,24 @@ grasshopperMoves board pq = do
     return $ head
            $ dropWhile (board `isOccupiedAt`)
            $ iterate (Grid.neighbor dir) nabe
+
+ladybugMoves board pq = do
+   nabe1 <- occupiedNeighbors board' pq
+   nabe2 <- occupiedNeighbors board' nabe1
+   nabe3 <- Grid.neighbors nabe2
+   guard (board' `isNotOccupiedAt` nabe3)
+   return nabe3
+ where
+    board' = board `removePiecesAt` pq
+    -- XXX: or just remove top piece? but i guess ladybugs can never be on top
+    -- considering making board more opaque so i have to be more mindful of stacks
+
+mosquitoMoves = undefined
+-- this will involve some rewriting of the board as different pieces
+-- and unioning up all the possibilities
+
+-- pillbug will likely require special processing outside these handlers
+pillbugMoves = planarPassibleNeighbors
 
 queenBeeMoves :: Board -> AxialPoint -> [AxialPoint]
 queenBeeMoves = planarPassibleNeighbors
@@ -140,4 +146,4 @@ spiderMoves board pq = do
     guard $ isPlanarPassible board nabe2 nabe3
     return nabe3
 
-
+-- TODO: dispatch on the Species type to the above handlers

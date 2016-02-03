@@ -1,6 +1,10 @@
 module Engine where
 
+import Control.Monad (guard)
 import Data.Map.Strict (Map)
+import Data.Maybe (isJust)
+import HexGrid (AxialPoint)
+import qualified Data.Map.Strict as Map
 import qualified HexGrid as Grid
 
 -- game engine
@@ -17,7 +21,7 @@ data Piece = Piece
     , pieceName :: String
     } deriving (Eq,Show)
 
-type Board = Map Grid.AxialPoint [Piece]
+type Board = Map AxialPoint [Piece]
 
 data Game = Game { gameId :: Integer -- TODO: fancier ID type?
                  , gametitle :: String
@@ -25,14 +29,14 @@ data Game = Game { gameId :: Integer -- TODO: fancier ID type?
                  , gameUnplaced :: [Piece] -- Set?
                  , gameMoves :: [Move] -- move history
                  , gamePossibleMoves :: Map Piece [Move]
-                 , gameSpawns :: [Grid.AxialPoint]
+                 , gameSpawns :: [AxialPoint]
                  , gameTurn :: Team
                  , gameWinner :: Maybe Team
                  -- TODO: players' user account reference of some kind?
                  } deriving (Eq, Show)
 
 data Move = Move { movePiece :: Piece
-                 , moveCoords :: Grid.AxialPoint
+                 , moveCoords :: AxialPoint
                  -- , moveName :: String -- e.g. "bA2 /wG1"
                  } deriving (Eq,Show)
 
@@ -78,4 +82,62 @@ pieceFromName name = Piece species team name
 
 -- allowedMoves :: Board -> Piece -> Graph.AxialPoint -> [Move]
 -- allowedMoves board (Piece QueenBee _ _) pos
+
+isOccupiedAt :: Board -> AxialPoint -> Bool
+isOccupiedAt board pq = isJust $ Map.lookup pq board
+
+isNotOccupiedAt board pq = not $ board `isOccupiedAt` pq
+
+occupiedNeighbors :: Board -> AxialPoint -> [AxialPoint]
+occupiedNeighbors board pq = filter (board `isOccupiedAt`) $ Grid.neighbors pq
+
+-- | determine if two adjacent positions are planar-passable (not gated)
+-- | NOTE: only considers the bottommost plane! does not consider movement atop the hive
+isPlanarPassible :: Board -> AxialPoint -> AxialPoint -> Bool
+isPlanarPassible board pqFrom pqTo =
+    not (board `isOccupiedAt` pqTo)
+    && any (board' `isOccupiedAt`) (Grid.neighbors pqTo)
+    -- one gate position or the other must be occupied, but not both
+    && ((board' `isOccupiedAt` gate1)
+        `xor` (board' `isOccupiedAt` gate2))
+  where
+    -- board' removes considered piece from the board
+    board' = Map.delete pqFrom board 
+    (gate1,gate2) = Grid.gatePositions pqFrom pqTo
+    xor = (/=)
+
+planarPassibleNeighbors :: Board -> AxialPoint -> [AxialPoint]
+planarPassibleNeighbors board pq = filter (isPlanarPassible board pq) $ Grid.neighbors pq
+
+beetleMoves :: Board -> AxialPoint -> [AxialPoint]
+beetleMoves board pq =
+    filter (\nabe -> board `isOccupiedAt` nabe || isPlanarPassible board pq nabe)
+      $ Grid.neighbors pq
+
+grasshopperMoves :: Board -> AxialPoint -> [AxialPoint]
+grasshopperMoves board pq = do
+    dir <- Grid.allDirections
+    let nabe = Grid.neighbor dir pq
+    guard (board `isOccupiedAt` nabe)
+    -- scan in this direction until we see an unoccupied hex
+    return $ head
+           $ dropWhile (board `isOccupiedAt`)
+           $ iterate (Grid.neighbor dir) nabe
+
+queenBeeMoves :: Board -> AxialPoint -> [AxialPoint]
+queenBeeMoves = planarPassibleNeighbors
+
+spiderMoves :: Board -> AxialPoint -> [AxialPoint]
+spiderMoves board pq = do
+    dir <- Grid.allDirections
+    let nabe = Grid.neighbor dir pq
+    guard $ isPlanarPassible board pq nabe
+    dir <- filter (/= dir) Grid.allDirections
+    let nabe2 = Grid.neighbor dir nabe
+    guard $ isPlanarPassible board nabe nabe2
+    dir <- filter (/= dir) Grid.allDirections
+    let nabe3 = Grid.neighbor dir nabe
+    guard $ isPlanarPassible board nabe2 nabe3
+    return nabe3
+
 

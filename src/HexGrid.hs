@@ -17,10 +17,13 @@ data PixelPoint = Pixel Double Double
 
 -- TODO: distinguish vectors from points?
 data AxialPoint = Axial Double Double
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 data CubicPoint = Cubic Double Double Double
   deriving (Show, Eq)
+
+allDirections :: [Direction]
+allDirections = [NE, E, SE, SW, W, NW]
 
 opposite :: Direction -> Direction
 opposite dir =

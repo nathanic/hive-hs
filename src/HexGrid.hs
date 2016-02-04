@@ -16,9 +16,11 @@ data PixelPoint = Pixel Double Double
   deriving (Show, Eq)
 
 -- TODO: distinguish vectors from points?
-data AxialPoint = Axial Double Double
+-- axial points are always integer coordinates on the centers of hexes
+data AxialPoint = Axial Int Int
   deriving (Show, Eq, Ord)
 
+-- cubic hex space is more freeform for intermediate calculations
 data CubicPoint = Cubic Double Double Double
   deriving (Show, Eq)
 
@@ -27,13 +29,13 @@ allDirections = [NE, E, SE, SW, W, NW]
 
 opposite :: Direction -> Direction
 opposite dir =
-  case dir of
-            NE -> SW
-            E  -> W
-            SE -> NW
-            SW -> NE
-            W  -> E
-            NW -> SE
+    case dir of
+        NE -> SW
+        E  -> W
+        SE -> NW
+        SW -> NE
+        W  -> E
+        NW -> SE
 
 hexWidthFromSize :: Double -> Double
 hexWidthFromSize size = size * sqrt 3.0
@@ -45,19 +47,19 @@ hexDimsFromSize :: Double -> (Double, Double)
 hexDimsFromSize size = (hexWidthFromSize size, hexHeightFromSize size)
 
 axialToCubic :: AxialPoint -> CubicPoint
-axialToCubic (Axial p q) = Cubic p q (0 - p - q)
+axialToCubic (Axial p q) = Cubic (fromIntegral p) (fromIntegral q) (fromIntegral (-p - q))
 
 cubicToAxial :: CubicPoint -> AxialPoint
-cubicToAxial (Cubic x y z) = Axial x y
+cubicToAxial (Cubic x y z) = Axial (round x) (round y)
 
 directionVectors :: [(Direction, AxialPoint)]
-directionVectors =  [
-    (NE, (Axial  1  (-1))),
-    (E , (Axial  1    0 )),
-    (SE, (Axial  0    1 )),
-    (SW, (Axial (-1)  1 )),
-    (W , (Axial (-1)  0 )),
-    (NW, (Axial  0  (-1)))
+directionVectors =
+    [ (NE, Axial  1  (-1))
+    , (E , Axial  1    0 )
+    , (SE, Axial  0    1 )
+    , (SW, Axial (-1)  1 )
+    , (W , Axial (-1)  0 )
+    , (NW, Axial  0  (-1))
     ]
 
 directionToAxialVector :: Direction -> AxialPoint
@@ -69,7 +71,7 @@ neighbor dir (Axial p q) = Axial (p + dp) (q + dq)
   where Axial dp dq = directionToAxialVector dir
 
 neighbors :: AxialPoint -> [AxialPoint]
-neighbors axpt = map (flip neighbor axpt) [NE,E,SE,SW,W,NW]
+neighbors axpt = map (`neighbor` axpt) [NE,E,SE,SW,W,NW]
 
 rotate60 :: CubicPoint -> Rotation -> CubicPoint
 rotate60 (Cubic x y z)  CW = Cubic (-y) (-z) (-x)
@@ -86,10 +88,9 @@ gatePositions axA axB = (cubicToAxial gate1, cubicToAxial gate2)
     gate1 = cuA `plus` rotate60 cuVec CW
     gate2 = cuA `plus` rotate60 cuVec CCW
 
+-- XXX works only on immediately neighboring hexes!
 findDirectionFromAxialPoints :: AxialPoint -> AxialPoint -> Maybe Direction
 findDirectionFromAxialPoints (Axial pFrom qFrom) (Axial pTo qTo) =
-    -- BUG? this compare is real dicey with floats
-    -- but in practice so far we only ever use this on directly adjacent, integer hex coordinates
     lookup (Axial (pTo - pFrom) (qTo - qFrom)) $ map swap directionVectors
 
 

@@ -1,12 +1,16 @@
 module Engine where
 
 import Control.Monad (guard)
+import Data.List (find, nub, delete)
 import Data.Map.Strict (Map)
+import Data.Set (Set)
+import qualified Data.Set as Set
+import qualified Data.Graph as Graph
 
-import HexGrid (AxialPoint)
+import HexGrid (AxialPoint(..))
 import qualified HexGrid as Grid
 import Piece
-import Board (Board, isOccupiedAt, isNotOccupiedAt, occupiedNeighbors, piecesAt, topPieceAt, removePiecesAt, removeTopPieceAt)
+import Board
 
 -- Start with the types!
 
@@ -32,7 +36,7 @@ data Move = Move { movePiece :: Piece
 
 
 -- | determine if two adjacent positions are planar-passable (not gated)
--- | NOTE: only considers the bottommost plane! does not consider movement atop the hive
+-- | XXX: only considers the bottommost plane! does not consider movement atop the hive
 isPlanarPassible :: Board -> AxialPoint -> AxialPoint -> Bool
 isPlanarPassible board pqFrom pqTo =
     not (board `isOccupiedAt` pqTo)
@@ -49,18 +53,27 @@ isPlanarPassible board pqFrom pqTo =
 planarPassibleNeighbors :: Board -> AxialPoint -> [AxialPoint]
 planarPassibleNeighbors board pq = filter (isPlanarPassible board pq) $ Grid.neighbors pq
 
-
 antMoves :: Board -> AxialPoint -> [AxialPoint]
-antMoves = undefined
--- this one involves some graph theory
--- probably have to look into fgl
--- convert board into graph
--- then successors query etc.
+antMoves board origin = delete origin reachable -- disallow starting pos
+  where
+    -- consider the board without this ant on it
+    board' = removeTopPieceAt board origin
+    -- find all empty hexes adjacent to occupied hexes (and dedupe)
+    emptyBorderPositions = nub $ allOccupiedPositions board' >>= unoccupiedNeighbors board'
+    -- build an adjacency list (graph) of these empty positions
+    -- every empty border cell is a vertex, and has edges to every adjacent empty border cell
+    emptyBorderAdjList = map (\pq -> (pq, pq, unoccupiedNeighbors board' pq)) emptyBorderPositions
+    -- calculate strongly connected components, maximal islands of connectivity
+    components = map Graph.flattenSCC $ Graph.stronglyConnComp emptyBorderAdjList
+    -- we know for a fact that one of the components must have our origin
+    -- containing the coordinates of all hexes reachable therefrom
+    Just reachable = find (elem origin) components
+
 
 beetleMoves :: Board -> AxialPoint -> [AxialPoint]
-beetleMoves board pq =
-    filter (\nabe -> board `isOccupiedAt` nabe || isPlanarPassible board pq nabe)
-      $ Grid.neighbors pq
+beetleMoves board origin =
+    filter (\nabe -> board `isOccupiedAt` nabe || isPlanarPassible board origin nabe)
+      $ Grid.neighbors origin
 
 grasshopperMoves :: Board -> AxialPoint -> [AxialPoint]
 grasshopperMoves board pq = do
@@ -72,16 +85,12 @@ grasshopperMoves board pq = do
            $ dropWhile (board `isOccupiedAt`)
            $ iterate (Grid.neighbor dir) nabe
 
-ladybugMoves board pq = do
-   nabe1 <- occupiedNeighbors board' pq
-   nabe2 <- occupiedNeighbors board' nabe1
-   nabe3 <- Grid.neighbors nabe2
-   guard (board' `isNotOccupiedAt` nabe3)
-   return nabe3
- where
-    board' = board `removePiecesAt` pq
-    -- XXX: or just remove top piece? but i guess ladybugs can never be on top
-    -- considering making board more opaque so i have to be more mindful of stacks
+-- oh monads, how i had missed you
+ladybugMoves board pq =
+    occupiedNeighbors board' pq
+        >>= occupiedNeighbors board'
+        >>= unoccupiedNeighbors board'
+  where board' = board `removeTopPieceAt` pq
 
 mosquitoMoves = undefined
 -- this will involve some rewriting of the board as different pieces
@@ -106,5 +115,28 @@ spiderMoves board pq = do
     guard $ isPlanarPassible board nabe2 nabe3
     return nabe3
 
--- TODO: a thingy dispatch on the Species type to the above handlers
+-- | Precondition: piece at pq is free to move
+movesForPieceAtPosition :: Board -> AxialPoint -> [AxialPoint]
+movesForPieceAtPosition board origin = calcMoves board origin
+  where
+    -- there is probably some hot shit haskelly way to dispatch this
+    -- but honestly typing it out wasn't that painful
+    calcMoves = case pieceSpecies <$> topPieceAt board origin of
+        Just Ant -> antMoves
+        Just Beetle -> beetleMoves
+        Just Grasshopper -> grasshopperMoves
+        Just Ladybug -> ladybugMoves
+        Just Mosquito -> mosquitoMoves
+        Just Pillbug -> pillbugMoves
+        Just QueenBee -> queenBeeMoves
+        Just Spider -> spiderMoves
+        Nothing -> \_ _ -> []
 
+
+{-
+
+queenBeeMoves example1 (Axial 3 4)
+
+
+
+ -}

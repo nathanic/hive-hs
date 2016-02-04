@@ -14,7 +14,10 @@ data Piece = Piece
     { pieceSpecies :: Species
     , pieceTeam :: Team
     , pieceName :: String
-    } deriving (Eq,Show)
+    } deriving (Eq)
+
+instance Show Piece where
+    show (Piece _ _ name) = name
 
 -- | the set of all possible pieces.
 allPieces :: [Piece]

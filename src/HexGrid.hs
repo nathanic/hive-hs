@@ -88,9 +88,9 @@ gatePositions axA axB = (cubicToAxial gate1, cubicToAxial gate2)
     gate1 = cuA `plus` rotate60 cuVec CW
     gate2 = cuA `plus` rotate60 cuVec CCW
 
--- XXX works only on immediately neighboring hexes!
 findDirectionFromAxialPoints :: AxialPoint -> AxialPoint -> Maybe Direction
 findDirectionFromAxialPoints (Axial pFrom qFrom) (Axial pTo qTo) =
-    lookup (Axial (pTo - pFrom) (qTo - qFrom)) $ map swap directionVectors
-
+    lookup (Axial (oneOrZero (pTo - pFrom)) (oneOrZero (qTo - qFrom)))
+        $ map swap directionVectors
+  where oneOrZero x = if x >= 1 then 1 else 0
 

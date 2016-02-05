@@ -18,7 +18,8 @@ import Piece
 import HexGrid (AxialPoint(..))
 import qualified HexGrid as Grid
 
-import Data.Graph (stronglyConnComp, SCC(..))
+import qualified Data.Graph as Graph
+import Data.List (nub)
 import Data.Maybe (isJust, listToMaybe, fromMaybe)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -30,15 +31,15 @@ newtype Board = Board { unBoard :: Map AxialPoint [Piece] }
   deriving (Eq, Show)
 
 piecesAt :: Board -> AxialPoint -> [Piece]
-piecesAt (Board board) pq = fromMaybe [] $ Map.lookup pq board
+piecesAt (Board bmap) pq = fromMaybe [] $ Map.lookup pq bmap
 
 removePiecesAt :: Board -> AxialPoint -> Board
-removePiecesAt (Board board) pq = Board $ Map.delete pq board
+removePiecesAt (Board bmap) pq = Board $ Map.delete pq bmap
 
 removeTopPieceAt :: Board -> AxialPoint -> Board
-removeTopPieceAt (Board board) pq = Board $ Map.update tailOrDeath pq board
+removeTopPieceAt (Board bmap) pq = Board $ Map.update tailOrDeath pq bmap
   where
-    tailOrDeath []     = Nothing 
+    tailOrDeath []     = Nothing
     tailOrDeath [_]    = Nothing -- don't retain empty lists
     tailOrDeath (_:xs) = Just xs
 
@@ -58,20 +59,12 @@ unoccupiedNeighbors :: Board -> AxialPoint -> [AxialPoint]
 unoccupiedNeighbors board pq = filter (board `isUnoccupiedAt`) $ Grid.neighbors pq
 
 allOccupiedPositions :: Board -> [AxialPoint]
-allOccupiedPositions (Board board) = Map.keys board
+allOccupiedPositions (Board bmap) = Map.keys bmap
 
--- remove this piece from board
--- make a graph of the board
--- find strongly connected components of board graph
--- if there's more than one maximal SCC then the piece ain't free
+allPiecesOnBoard  = concat . Map.elems . unBoard
+
 pieceIsFree :: Board -> AxialPoint -> Bool
-pieceIsFree board pq =
-    case stronglyConnComp (boardToAdjacencyList board') of
-        [CyclicSCC _] -> True
-        _             -> False
-  where
-    board' = removeTopPieceAt board pq
-
+pieceIsFree board pq = isOneHive (board `removeTopPieceAt` pq)
 
 -- convert a board (map of axial coords to Pieces) into a Data.Graph style adjacency list
 -- each vertex is a piece's axial coordinates
@@ -81,15 +74,26 @@ boardToAdjacencyList :: Board -> [(AxialPoint, AxialPoint, [AxialPoint])]
 boardToAdjacencyList board@(Board bm) = map convert $ Map.keys bm
   where convert pq  = (pq, pq, occupiedNeighbors board pq)
 
+-- | Is the board a contiguous set of pieces? (Does it satisfy the One Hive Rule?)
+-- firstly, we must have no more than one strongly connected component in the board graph
+isOneHive :: Board -> Bool
+isOneHive b =
+    case Graph.stronglyConnComp $ boardToAdjacencyList b of
+        []  -> True  -- empty board is okay(?)
+        [_] -> True  -- nonempty must have exactly one strongly connected graph o' pieces
+        _   -> False -- multiple disconnected islands of pieces -> bad board
 
+isValidBoard :: Board -> Bool
+isValidBoard b = isOneHive b && length allPieces == length (nub allPieces)
+  where allPieces = allPiecesOnBoard b
 
 
 --------------------------------------------------------------------------------
 --Debug Helpers
 
-instance Show a => Show (SCC a) where
-    show (AcyclicSCC x) = "AcyclicSCC " ++ show x
-    show (CyclicSCC xs) = "CyclicSCC " ++ show xs
+instance Show a => Show (Graph.SCC a) where
+    show (Graph.AcyclicSCC x) = "AcyclicSCC " ++ show x
+    show (Graph.CyclicSCC xs) = "CyclicSCC " ++ show xs
 
 -- XXX total hack, does not support stacks!
 boardFromAscList = Board . Map.fromAscList . map (\((p,q), name) -> (Axial p q, [pieceFromName name]))
@@ -131,4 +135,23 @@ example4 = boardFromAscList
     , ((0,3), "bS1")
     , ((1,2), "wS2")
     ]
+
+example5 = boardFromAscList
+  [ ((1,4), "wQ")
+  , ((1,5), "wA1")
+  , ((2,3), "wL")
+  , ((2,4), "wS1")
+  , ((3,4), "bS1")
+  , ((3,5), "bA1")
+  , ((4,3), "bQ")
+  , ((4,4), "bG1")
+  ]
+
+-- YO NATHAN
+-- READ THIS
+-- the next thing you need to do is write some tests
+-- because probably a lot of this shit is wrong
+
+-- though testing would probably be easier if i had a move parser
+-- and it'd be fun to get parsec out...
 

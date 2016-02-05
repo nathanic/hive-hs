@@ -1,8 +1,11 @@
 module Engine where
 
+import Control.Category ((>>>))
 import Control.Monad (guard)
 import Data.List (find, nub, delete)
+import qualified Data.List as List
 import Data.Map.Strict (Map)
+import Data.Maybe (fromJust, fromMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Graph as Graph
@@ -37,8 +40,8 @@ data Move = Move { movePiece :: Piece
 
 -- | determine if two adjacent positions are planar-passable (not gated)
 -- | XXX: only considers the bottommost plane! does not consider movement atop the hive
-isPlanarPassible :: Board -> AxialPoint -> AxialPoint -> Bool
-isPlanarPassible board pqFrom pqTo =
+isPlanarPassable :: Board -> AxialPoint -> AxialPoint -> Bool
+isPlanarPassable board pqFrom pqTo =
     not (board `isOccupiedAt` pqTo)
     && any (board' `isOccupiedAt`) (Grid.neighbors pqTo)
     -- one gate position or the other must be occupied, but not both
@@ -50,8 +53,8 @@ isPlanarPassible board pqFrom pqTo =
     (gate1,gate2) = Grid.gatePositions pqFrom pqTo
     xor = (/=)
 
-planarPassibleNeighbors :: Board -> AxialPoint -> [AxialPoint]
-planarPassibleNeighbors board pq = filter (isPlanarPassible board pq) $ Grid.neighbors pq
+planarPassableNeighbors :: Board -> AxialPoint -> [AxialPoint]
+planarPassableNeighbors board pq = filter (isPlanarPassable board pq) $ Grid.neighbors pq
 
 antMoves :: Board -> AxialPoint -> [AxialPoint]
 antMoves board origin = delete origin reachable -- disallow starting pos
@@ -72,13 +75,13 @@ antMoves board origin = delete origin reachable -- disallow starting pos
 
 beetleMoves :: Board -> AxialPoint -> [AxialPoint]
 beetleMoves board origin =
-    filter (\nabe -> board `isOccupiedAt` nabe || isPlanarPassible board origin nabe)
+    filter (\nabe -> board `isOccupiedAt` nabe || isPlanarPassable board origin nabe)
       $ Grid.neighbors origin
 
 grasshopperMoves :: Board -> AxialPoint -> [AxialPoint]
-grasshopperMoves board pq = do
+grasshopperMoves board origin = do
     dir <- Grid.allDirections
-    let nabe = Grid.neighbor dir pq
+    let nabe = Grid.neighbor dir origin
     guard (board `isOccupiedAt` nabe)
     -- scan in this direction until we see an unoccupied hex
     return $ head
@@ -86,57 +89,70 @@ grasshopperMoves board pq = do
            $ iterate (Grid.neighbor dir) nabe
 
 -- oh monads, how i had missed you
-ladybugMoves board pq =
-    occupiedNeighbors board' pq
+ladybugMoves board origin = delete origin . nub $
+    occupiedNeighbors board' origin
         >>= occupiedNeighbors board'
         >>= unoccupiedNeighbors board'
-  where board' = board `removeTopPieceAt` pq
+  where board' = board `removeTopPieceAt` origin
 
-mosquitoMoves = undefined
--- this will involve some rewriting of the board as different pieces
--- and unioning up all the possibilities
+mosquitoMoves board origin = aggMoves $ occupiedNeighbors board origin
+  where
+    apply moves = moves board origin
+    aggMoves = map (topPieceAt board
+                        >>> fromJust
+                        >>> pieceSpecies
+                        >>> movesForSpecies
+                        >>> apply
+                        >>> Set.fromList)
+                >>> Set.unions
+                >>> Set.delete origin
+                >>> Set.toList
 
 -- pillbug will likely require special processing outside these handlers
-pillbugMoves = planarPassibleNeighbors
+pillbugMoves = planarPassableNeighbors
 
 queenBeeMoves :: Board -> AxialPoint -> [AxialPoint]
-queenBeeMoves = planarPassibleNeighbors
+queenBeeMoves = planarPassableNeighbors
 
 spiderMoves :: Board -> AxialPoint -> [AxialPoint]
-spiderMoves board pq = do
+spiderMoves board origin = nub $ do
     dir <- Grid.allDirections
-    let nabe = Grid.neighbor dir pq
-    guard $ isPlanarPassible board pq nabe
+    let nabe = Grid.neighbor dir origin
+    guard $ isPlanarPassable board origin nabe
     dir <- filter (/= dir) Grid.allDirections
     let nabe2 = Grid.neighbor dir nabe
-    guard $ isPlanarPassible board nabe nabe2
+    guard $ isPlanarPassable board nabe nabe2
     dir <- filter (/= dir) Grid.allDirections
-    let nabe3 = Grid.neighbor dir nabe
-    guard $ isPlanarPassible board nabe2 nabe3
+    let nabe3 = Grid.neighbor dir nabe2
+    guard $ isPlanarPassable board nabe2 nabe3
     return nabe3
 
--- | Precondition: piece at pq is free to move
+-- | Precondition: piece at origin is free to move
 movesForPieceAtPosition :: Board -> AxialPoint -> [AxialPoint]
-movesForPieceAtPosition board origin = calcMoves board origin
-  where
-    -- there is probably some hot shit haskelly way to dispatch this
-    -- but honestly typing it out wasn't that painful
-    calcMoves = case pieceSpecies <$> topPieceAt board origin of
-        Just Ant -> antMoves
-        Just Beetle -> beetleMoves
-        Just Grasshopper -> grasshopperMoves
-        Just Ladybug -> ladybugMoves
-        Just Mosquito -> mosquitoMoves
-        Just Pillbug -> pillbugMoves
-        Just QueenBee -> queenBeeMoves
-        Just Spider -> spiderMoves
-        Nothing -> \_ _ -> []
+movesForPieceAtPosition board origin =
+    maybe (\_ _ -> [])
+        (movesForSpecies . pieceSpecies)
+        (topPieceAt board origin)
+        board
+        origin
+
+
+-- there is probably some hot shit haskelly way to dispatch this
+-- but honestly typing it out wasn't that painful
+movesForSpecies :: Species -> Board -> AxialPoint -> [AxialPoint]
+movesForSpecies species =
+    case species of
+        Ant -> antMoves
+        Beetle -> beetleMoves
+        Grasshopper -> grasshopperMoves
+        Ladybug -> ladybugMoves
+        Mosquito -> mosquitoMoves
+        Pillbug -> pillbugMoves
+        QueenBee -> queenBeeMoves
+        Spider -> spiderMoves
 
 
 {-
-
-queenBeeMoves example1 (Axial 3 4)
-
 
 
  -}

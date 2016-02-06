@@ -2,13 +2,13 @@ module Engine where
 
 import Control.Category ((>>>))
 import Control.Monad (guard)
-import Data.List (find, nub, delete)
+import Data.List (find, nub, delete, foldl')
 import qualified Data.List as List
 import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (fromJust, fromMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
-import qualified Data.Graph as Graph
 
 import HexGrid (AxialPoint(..))
 import qualified HexGrid as Grid
@@ -34,27 +34,23 @@ data Move = Move { movePiece :: Piece
                  -- , moveName :: String -- e.g. "bA2 /wG1"
                  } deriving (Eq,Show)
 
--- allowedMoves :: Board -> Piece -> Graph.AxialPoint -> [Move]
--- allowedMoves board (Piece QueenBee _ _) pos
-
 
 -- | determine if two adjacent positions are planar-passable (not gated)
 -- | XXX: only considers the bottommost plane! does not consider movement atop the hive
 isPlanarPassable :: Board -> AxialPoint -> AxialPoint -> Bool
-isPlanarPassable board pqFrom pqTo =
-    not (board `isOccupiedAt` pqTo)
-    && any (board' `isOccupiedAt`) (Grid.neighbors pqTo)
+isPlanarPassable board from to =
+    not (board `isOccupiedAt` to)
+    && any (board' `isOccupiedAt`) (Grid.neighbors to)
     -- one gate position or the other must be occupied, but not both
-    && ((board' `isOccupiedAt` gate1)
-        `xor` (board' `isOccupiedAt` gate2))
+    && ((board' `isOccupiedAt` gate1) `xor` (board' `isOccupiedAt` gate2))
   where
     -- board' removes considered piece from the board
-    board' = board `removePiecesAt` pqFrom
-    (gate1,gate2) = Grid.gatePositions pqFrom pqTo
+    board' = board `removePiecesAt` from
+    (gate1,gate2) = Grid.gatePositions from to
     xor = (/=)
 
 planarPassableNeighbors :: Board -> AxialPoint -> [AxialPoint]
-planarPassableNeighbors board pq = filter (isPlanarPassable board pq) $ Grid.neighbors pq
+planarPassableNeighbors board pos = filter (isPlanarPassable board pos) $ Grid.neighbors pos
 
 antMoves :: Board -> AxialPoint -> [AxialPoint]
 antMoves board origin = delete origin reachable -- disallow starting pos
@@ -65,18 +61,18 @@ antMoves board origin = delete origin reachable -- disallow starting pos
     emptyBorderPositions = nub $ allOccupiedPositions board' >>= unoccupiedNeighbors board'
     -- build an adjacency list (graph) of these empty positions
     -- every empty border cell is a vertex, and has edges to every adjacent empty border cell
-    emptyBorderAdjList = map (\pq -> (pq, pq, unoccupiedNeighbors board' pq)) emptyBorderPositions
-    -- calculate strongly connected components, maximal islands of connectivity
-    components = map Graph.flattenSCC $ Graph.stronglyConnComp emptyBorderAdjList
+    emptyBorderAdjList = map (\pos -> (pos, pos, unoccupiedNeighbors board' pos)) emptyBorderPositions
+    -- calculate connected components, islands of connectivity
+    components = connectedComponents emptyBorderAdjList
     -- we know for a fact that one of the components must have our origin
     -- containing the coordinates of all hexes reachable therefrom
     Just reachable = find (elem origin) components
 
-
 beetleMoves :: Board -> AxialPoint -> [AxialPoint]
-beetleMoves board origin =
-    filter (\nabe -> board `isOccupiedAt` nabe || isPlanarPassable board origin nabe)
-      $ Grid.neighbors origin
+beetleMoves board origin = filter kosher $ Grid.neighbors origin
+  where
+    kosher nabe = board' `isOccupiedAt` nabe || isPlanarPassable board' origin nabe
+    board' = removeTopPieceAt board origin
 
 grasshopperMoves :: Board -> AxialPoint -> [AxialPoint]
 grasshopperMoves board origin = do
@@ -95,21 +91,34 @@ ladybugMoves board origin = delete origin . nub $
         >>= unoccupiedNeighbors board'
   where board' = board `removeTopPieceAt` origin
 
-mosquitoMoves board origin = aggMoves $ occupiedNeighbors board origin
+-- hmm, shouldn't need to delete, as other handlers should do that...
+mosquitoMoves board origin = Set.toList . Set.delete origin . Set.unions $ movesets
   where
-    apply moves = moves board origin
-    aggMoves = map (topPieceAt board
-                        >>> fromJust
-                        >>> pieceSpecies
-                        >>> movesForSpecies
-                        >>> apply
-                        >>> Set.fromList)
-                >>> Set.unions
-                >>> Set.delete origin
-                >>> Set.toList
+    movesets = [Set.fromList $ movesForSpecies species board origin
+                    | nabe <- occupiedNeighbors board origin
+                    , let species = pieceSpecies . fromJust $ topPieceAt board nabe
+                    , species /= Mosquito]
 
--- pillbug will likely require special processing outside these handlers
+
+-- the pillbug itself moves like a queen, but see below for special powers
 pillbugMoves = planarPassableNeighbors
+
+-- pillbug requires special handling since it alone can move other pieces around
+pillbugProcessing :: Game -> Map Piece [AxialPoint]
+pillbugProcessing game = Map.unionsWith (++) $ map handlePillbug pillbugPoses
+  where
+    Game { gameBoard = board, gameMoves = history } = game
+    pillbugPoses = findTopPiecesBySpecies Pillbug board
+    handlePillbug pillbugPos = Map.fromList $ zip victims (repeat targets)
+        where
+            victims = [ piece
+                        | pos <- occupiedNeighbors board pillbugPos
+                        , let Just piece = board `topPieceAt` pos
+                        , didntJustMove piece]
+            targets = unoccupiedNeighbors board pillbugPos -- XXX BUG does not check upper planar passability
+    -- XXX wait, is it the last TWO moves? need to check rules
+    didntJustMove piece = null history || piece /= movePiece (last history)
+
 
 queenBeeMoves :: Board -> AxialPoint -> [AxialPoint]
 queenBeeMoves = planarPassableNeighbors
@@ -151,8 +160,26 @@ movesForSpecies species =
         QueenBee -> queenBeeMoves
         Spider -> spiderMoves
 
+allMovesForGame :: Game -> Map Piece [AxialPoint]
+allMovesForGame game = Map.unionWith (++) movemap (pillbugProcessing game)
+  where
+    board = gameBoard game
+    freePoses = allFreePiecePositions board
+    movemap = foldl' (\acc pos -> Map.insert (fromJust $ board `topPieceAt` pos)
+                                   (movesForPieceAtPosition board pos)
+                                   acc)
+                mempty
+                freePoses
 
-{-
 
+-- So, for the client side, I'm going to write my first purescript ever.
+-- I was originally thinking canvas, but I want to try just html/css
+-- I want to target mobile, where I feel like fancy css is noticably faster than canvas
+-- This looks awesome:
+-- https://github.com/web-tiki/responsive-grid-of-hexagons
+-- modify that to suit my needs
+-- create a grid of hexes with ids like "axial-1-3"
+-- render function maps from the game state to classes/attrs of these hex cells
+--
+-- maybe use bodil's signal lib? 
 
- -}

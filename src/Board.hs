@@ -23,6 +23,7 @@ import Data.List (nub)
 import Data.Maybe (isJust, listToMaybe, fromMaybe)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Tree as Tree
 
 -- defensive programming: hide the details of the Board type
 -- such that only this module can see them, so i don't forget
@@ -31,40 +32,55 @@ newtype Board = Board { unBoard :: Map AxialPoint [Piece] }
   deriving (Eq, Show)
 
 piecesAt :: Board -> AxialPoint -> [Piece]
-piecesAt (Board bmap) pq = fromMaybe [] $ Map.lookup pq bmap
+piecesAt (Board bmap) pos = fromMaybe [] $ Map.lookup pos bmap
 
 removePiecesAt :: Board -> AxialPoint -> Board
-removePiecesAt (Board bmap) pq = Board $ Map.delete pq bmap
+removePiecesAt (Board bmap) pos = Board $ Map.delete pos bmap
 
 removeTopPieceAt :: Board -> AxialPoint -> Board
-removeTopPieceAt (Board bmap) pq = Board $ Map.update tailOrDeath pq bmap
+removeTopPieceAt (Board bmap) pos = Board $ Map.update tailOrDeath pos bmap
   where
     tailOrDeath []     = Nothing
     tailOrDeath [_]    = Nothing -- don't retain empty lists
     tailOrDeath (_:xs) = Just xs
 
 topPieceAt :: Board -> AxialPoint -> Maybe Piece
-topPieceAt board pq = listToMaybe $ board `piecesAt` pq
+topPieceAt board pos = listToMaybe $ board `piecesAt` pos
 
 isOccupiedAt :: Board -> AxialPoint -> Bool
-isOccupiedAt board pq = not . null $ board `piecesAt` pq
+isOccupiedAt board pos = not . null $ board `piecesAt` pos
 
 isUnoccupiedAt :: Board -> AxialPoint -> Bool
 isUnoccupiedAt = (not .) . isOccupiedAt
 
 occupiedNeighbors :: Board -> AxialPoint -> [AxialPoint]
-occupiedNeighbors board pq = filter (board `isOccupiedAt`) $ Grid.neighbors pq
+occupiedNeighbors board pos = filter (board `isOccupiedAt`) $ Grid.neighbors pos
 
 unoccupiedNeighbors :: Board -> AxialPoint -> [AxialPoint]
-unoccupiedNeighbors board pq = filter (board `isUnoccupiedAt`) $ Grid.neighbors pq
+unoccupiedNeighbors board pos = filter (board `isUnoccupiedAt`) $ Grid.neighbors pos
 
 allOccupiedPositions :: Board -> [AxialPoint]
 allOccupiedPositions (Board bmap) = Map.keys bmap
 
 allPiecesOnBoard  = concat . Map.elems . unBoard
 
+findTopPieces :: (Piece -> Bool) -> Board -> [AxialPoint]
+findTopPieces f board = Map.foldlWithKey
+                            (\acc pos pieces ->
+                                if f (head pieces)
+                                    then pos:acc
+                                    else acc)
+                            []
+                            (unBoard board)
+
+findTopPiecesBySpecies spec = findTopPieces (\pc -> spec == pieceSpecies pc)
+
+-- | a.k.a. is this piece an articulation point in the board graph?
 pieceIsFree :: Board -> AxialPoint -> Bool
-pieceIsFree board pq = isOneHive (board `removeTopPieceAt` pq)
+pieceIsFree board pos = isOneHive (board `removeTopPieceAt` pos)
+
+allFreePiecePositions :: Board -> [AxialPoint]
+allFreePiecePositions board = filter (pieceIsFree board) $ allOccupiedPositions board
 
 -- convert a board (map of axial coords to Pieces) into a Data.Graph style adjacency list
 -- each vertex is a piece's axial coordinates
@@ -72,24 +88,29 @@ pieceIsFree board pq = isOneHive (board `removeTopPieceAt` pq)
 -- adjlist format is [(node, key, [keys of other nodes this node has directed edges to])]
 boardToAdjacencyList :: Board -> [(AxialPoint, AxialPoint, [AxialPoint])]
 boardToAdjacencyList board@(Board bm) = map convert $ Map.keys bm
-  where convert pq  = (pq, pq, occupiedNeighbors board pq)
+  where convert pos  = (pos, pos, occupiedNeighbors board pos)
 
 -- | Is the board a contiguous set of pieces? (Does it satisfy the One Hive Rule?)
--- firstly, we must have no more than one strongly connected component in the board graph
+-- firstly, we must have no more than one connected component in the board graph
 isOneHive :: Board -> Bool
 isOneHive b =
-    case Graph.stronglyConnComp $ boardToAdjacencyList b of
-        []  -> True  -- empty board is okay(?)
-        [_] -> True  -- nonempty must have exactly one strongly connected graph o' pieces
-        _   -> False -- multiple disconnected islands of pieces -> bad board
+    case connectedComponents $ boardToAdjacencyList b of
+        [_] -> True  -- nonempty must have exactly one connected component o' pieces
+        _   -> False -- empty or multiple disconnected islands of pieces -> bad board
 
 isValidBoard :: Board -> Bool
 isValidBoard b = isOneHive b && length allPieces == length (nub allPieces)
   where allPieces = allPiecesOnBoard b
 
+connectedComponents :: Ord key => [(node,key,[key])] -> [[node]]
+connectedComponents adjlist = deforest $ Graph.components g
+  where
+    (g,vertexInfo,_) = Graph.graphFromEdges adjlist
+    fst3 (x,_,_) = x
+    deforest = map (map (fst3 . vertexInfo) . Tree.flatten)
 
 --------------------------------------------------------------------------------
---Debug Helpers
+-- Debug Helpers and REPL scratch
 
 instance Show a => Show (Graph.SCC a) where
     show (Graph.AcyclicSCC x) = "AcyclicSCC " ++ show x
@@ -154,4 +175,19 @@ example5 = boardFromAscList
 
 -- though testing would probably be easier if i had a move parser
 -- and it'd be fun to get parsec out...
+
+-- https://en.wikipedia.org/wiki/Strongly_connected_component
+al = [('a', 'a', ['b'])
+     ,('b', 'b', ['c','e','f'])
+     ,('c', 'c', ['d','g'])
+     ,('d', 'd', ['c','h'])
+     ,('e', 'e', ['a','f'])
+     ,('f', 'f', ['g'])
+     ,('g', 'g', ['f'])
+     ,('h', 'h', ['d','g'])
+
+     ,('x', 'x', ['y'])
+     ,('y', 'y', [])
+     ]
+
 

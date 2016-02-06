@@ -1,5 +1,6 @@
 module Piece where
 
+import Data.Function (on)
 data Species = Ant | Beetle | Grasshopper | Ladybug | Mosquito | Pillbug | QueenBee | Spider
   deriving (Eq,Show)
 
@@ -18,6 +19,9 @@ data Piece = Piece
 
 instance Show Piece where
     show (Piece _ _ name) = name
+
+instance Ord Piece where
+    compare = compare `on` pieceName
 
 -- | the set of all possible pieces.
 allPieces :: [Piece]

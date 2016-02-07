@@ -10,11 +10,13 @@ import Data.Maybe (fromJust, fromMaybe)
 import Data.Monoid ((<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Text.ParserCombinators.Parsec as Parsec
 
 import HexGrid (AxialPoint(..))
 import qualified HexGrid as Grid
 import Piece
 import Board
+import Move
 
 -- Start with the types!
 
@@ -22,7 +24,7 @@ data Game = Game { gameId :: Integer -- TODO: fancier ID type?
                  , gameTitle :: String
                  , gameBoard :: Board
                  , gameUnplaced :: [Piece] -- Set?
-                 , gameMoves :: [Move] -- move history
+                 , gameMoves :: [AbsoluteMove] -- move history
                  , gamePossibleMoves :: Map Piece [AxialPoint]
                  , gameSpawns :: [AxialPoint]
                  , gameTurn :: Team
@@ -30,10 +32,6 @@ data Game = Game { gameId :: Integer -- TODO: fancier ID type?
                  -- TODO: players' user account reference of some kind?
                  } deriving (Eq, Show)
 
-data Move = Move { movePiece :: Piece
-                 , moveCoords :: AxialPoint
-                 -- , moveName :: String -- e.g. "bA2 /wG1"
-                 } deriving (Eq,Show)
 
 
 -- | determine if two adjacent positions are planar-passable (not gated)
@@ -203,14 +201,13 @@ applyMove piece pos game
          , gameUnplaced = unplaced
          } = game
     game' = game { gameBoard = board'
-                 , gameMoves = history <> [Move piece pos]
+                 , gameMoves = history <> [AbsoluteMove piece pos]
                  , gamePossibleMoves = allMovesForGame game' -- circular!
                  , gameSpawns = spawns (opposing turn) board'
                  , gameUnplaced = delete piece unplaced
                  , gameTurn = opposing turn
                  }
     board' = applyMoveToBoard piece pos board
-
 
 
 -- So, for the client side, I'm going to write my first purescript ever.

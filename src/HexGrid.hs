@@ -1,6 +1,6 @@
 module HexGrid
     ( AxialPoint(..)
-    , Direction
+    , Direction(..)
     , allDirections
     , directionVectors
     , neighbor

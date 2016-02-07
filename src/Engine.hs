@@ -7,6 +7,7 @@ import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromJust, fromMaybe)
+import Data.Monoid ((<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
 
@@ -18,11 +19,11 @@ import Board
 -- Start with the types!
 
 data Game = Game { gameId :: Integer -- TODO: fancier ID type?
-                 , gametitle :: String
+                 , gameTitle :: String
                  , gameBoard :: Board
                  , gameUnplaced :: [Piece] -- Set?
                  , gameMoves :: [Move] -- move history
-                 , gamePossibleMoves :: Map Piece [Move]
+                 , gamePossibleMoves :: Map Piece [AxialPoint]
                  , gameSpawns :: [AxialPoint]
                  , gameTurn :: Team
                  , gameWinner :: Maybe Team
@@ -42,12 +43,11 @@ isPlanarPassable board from to =
     not (board `isOccupiedAt` to)
     && any (board' `isOccupiedAt`) (Grid.neighbors to)
     -- one gate position or the other must be occupied, but not both
-    && ((board' `isOccupiedAt` gate1) `xor` (board' `isOccupiedAt` gate2))
+    && (board' `isOccupiedAt` gate1) /= (board' `isOccupiedAt` gate2)
   where
     -- board' removes considered piece from the board
-    board' = board `removePiecesAt` from
+    board' = removeTopPiece from board
     (gate1,gate2) = Grid.gatePositions from to
-    xor = (/=)
 
 planarPassableNeighbors :: Board -> AxialPoint -> [AxialPoint]
 planarPassableNeighbors board pos = filter (isPlanarPassable board pos) $ Grid.neighbors pos
@@ -91,31 +91,33 @@ ladybugMoves board origin = delete origin . nub $
         >>= unoccupiedNeighbors board'
   where board' = board `removeTopPieceAt` origin
 
--- hmm, shouldn't need to delete, as other handlers should do that...
-mosquitoMoves board origin = Set.toList . Set.delete origin . Set.unions $ movesets
-  where
-    movesets = [Set.fromList $ movesForSpecies species board origin
-                    | nabe <- occupiedNeighbors board origin
-                    , let species = pieceSpecies . fromJust $ topPieceAt board nabe
-                    , species /= Mosquito]
+mosquitoMoves board origin
+    | board `isStacked` origin = beetleMoves board origin
+    | otherwise                = Set.toList . Set.delete origin . Set.unions $ movesets
+        -- XXX ideally, shouldn't need to delete, as other handlers should do that...
+        where
+            movesets = [Set.fromList $ movesForSpecies species board origin
+                            | nabe <- occupiedNeighbors board origin
+                            , let species = pieceSpecies $ board `unsafeTopPieceAt` nabe
+                            , species /= Mosquito]
 
 
 -- the pillbug itself moves like a queen, but see below for special powers
 pillbugMoves = planarPassableNeighbors
 
--- pillbug requires special handling since it alone can move other pieces around
+-- pillbug requires out-of-band handling since it alone can move other pieces around
 pillbugProcessing :: Game -> Map Piece [AxialPoint]
-pillbugProcessing game = Map.unionsWith (++) $ map handlePillbug pillbugPoses
+pillbugProcessing game = Map.unionsWith (<>) (handlePillbug <$> pillbugPoses)
   where
     Game { gameBoard = board, gameMoves = history } = game
     pillbugPoses = findTopPiecesBySpecies Pillbug board
     handlePillbug pillbugPos = Map.fromList $ zip victims (repeat targets)
-        where
-            victims = [ piece
-                        | pos <- occupiedNeighbors board pillbugPos
-                        , let Just piece = board `topPieceAt` pos
-                        , didntJustMove piece]
-            targets = unoccupiedNeighbors board pillbugPos -- XXX BUG does not check upper planar passability
+      where
+          victims = [ piece
+                      | pos <- occupiedNeighbors board pillbugPos
+                      , let Just piece = board `topPieceAt` pos
+                      , didntJustMove piece]
+          targets = unoccupiedNeighbors board pillbugPos -- XXX BUG does not check upper planar passability
     -- XXX wait, is it the last TWO moves? need to check rules
     didntJustMove piece = null history || piece /= movePiece (last history)
 
@@ -161,15 +163,54 @@ movesForSpecies species =
         Spider -> spiderMoves
 
 allMovesForGame :: Game -> Map Piece [AxialPoint]
-allMovesForGame game = Map.unionWith (++) movemap (pillbugProcessing game)
+allMovesForGame game = Map.unionWith (<>) movemap (pillbugProcessing game)
   where
     board = gameBoard game
     freePoses = allFreePiecePositions board
-    movemap = foldl' (\acc pos -> Map.insert (fromJust $ board `topPieceAt` pos)
+    movemap = foldl' (\acc pos -> Map.insert (board `unsafeTopPieceAt` pos)
                                    (movesForPieceAtPosition board pos)
                                    acc)
                 mempty
                 freePoses
+
+spawns :: Team -> Board -> [AxialPoint]
+spawns team board = do
+    friendly <- findTopPieces (\p -> pieceTeam p == team) board
+    emptyNabe <- unoccupiedNeighbors board friendly
+    guard $ not $ any (\pos -> pieceTeam (unsafeTopPieceAt board pos) == opposing team)
+          $ occupiedNeighbors board emptyNabe
+    return emptyNabe
+
+isValidMove :: Game -> Piece -> AxialPoint -> Bool
+isValidMove game piece pos = gameTurn game == pieceTeam piece && possible
+  where possible = elem pos $ fromMaybe [] (Map.lookup piece $ gamePossibleMoves game)
+
+applyMoveToBoard :: Piece -> AxialPoint -> Board -> Board
+applyMoveToBoard piece to board =
+    case findTopPieces (== piece) board of
+        [] -> addPiece piece to board
+        [from] -> movePieceTo board from to
+        _ -> error "broken game! multiple instances of the same piece in the board."
+
+applyMove :: Piece -> AxialPoint -> Game -> Either String Game
+applyMove piece pos game
+    | isValidMove game piece pos = Right game'
+    | otherwise                  = Left "invalid move!"
+  where
+    Game { gameBoard = board
+         , gameMoves = history
+         , gameTurn = turn
+         , gameUnplaced = unplaced
+         } = game
+    game' = game { gameBoard = board'
+                 , gameMoves = history <> [Move piece pos]
+                 , gamePossibleMoves = allMovesForGame game' -- circular!
+                 , gameSpawns = spawns (opposing turn) board'
+                 , gameUnplaced = delete piece unplaced
+                 , gameTurn = opposing turn
+                 }
+    board' = applyMoveToBoard piece pos board
+
 
 
 -- So, for the client side, I'm going to write my first purescript ever.
@@ -178,8 +219,25 @@ allMovesForGame game = Map.unionWith (++) movemap (pillbugProcessing game)
 -- This looks awesome:
 -- https://github.com/web-tiki/responsive-grid-of-hexagons
 -- modify that to suit my needs
--- create a grid of hexes with ids like "axial-1-3"
+-- create a grid of hexes with axial ids like "hex-1-3"
 -- render function maps from the game state to classes/attrs of these hex cells
 --
--- maybe use bodil's signal lib? 
+-- maybe use bodil's signal lib?
+
+--------------------------------------------------------------------------------
+-- Debug helpers
+
+findUnplaced board = allPieces List.\\ allPiecesOnBoard board
+
+dummyGameFromBoard :: Board -> Game
+dummyGameFromBoard board = Game { gameId = 0
+                                , gameTitle = "dummy"
+                                , gameBoard = board
+                                , gameUnplaced = findUnplaced board
+                                , gameMoves = []
+                                , gamePossibleMoves = mempty
+                                , gameSpawns = []
+                                , gameTurn = White
+                                , gameWinner = Nothing
+                                }
 

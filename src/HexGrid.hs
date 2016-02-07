@@ -1,4 +1,13 @@
-module HexGrid where
+module HexGrid
+    ( AxialPoint(..)
+    , Direction
+    , allDirections
+    , directionVectors
+    , neighbor
+    , neighbors
+    , gatePositions
+    , findDirectionFromAxialPoints
+    ) where
 
 import Data.Maybe (fromJust)
 import Data.Tuple (swap)

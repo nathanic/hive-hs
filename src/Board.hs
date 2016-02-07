@@ -20,7 +20,7 @@ import qualified HexGrid as Grid
 
 import qualified Data.Graph as Graph
 import Data.List (nub)
-import Data.Maybe (isJust, listToMaybe, fromMaybe)
+import Data.Maybe (isJust, listToMaybe, fromJust, fromMaybe)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Tree as Tree
@@ -34,8 +34,28 @@ newtype Board = Board { unBoard :: Map AxialPoint [Piece] }
 piecesAt :: Board -> AxialPoint -> [Piece]
 piecesAt (Board bmap) pos = fromMaybe [] $ Map.lookup pos bmap
 
-removePiecesAt :: Board -> AxialPoint -> Board
-removePiecesAt (Board bmap) pos = Board $ Map.delete pos bmap
+isStacked :: Board -> AxialPoint -> Bool
+isStacked board pos =
+    case piecesAt board pos of
+        (_:_:_) -> True
+        _       -> False
+
+removePieces :: AxialPoint -> Board -> Board
+removePieces pos = Board . Map.delete pos . unBoard
+
+safeTail :: [a] -> [a]
+safeTail [] = []
+safeTail (_:xs) = xs
+
+removeTopPiece :: AxialPoint -> Board -> Board
+removeTopPiece pos = Board . Map.adjust safeTail pos . unBoard
+
+addPiece :: Piece -> AxialPoint -> Board -> Board
+addPiece piece pos = Board . Map.insertWith (++) pos [piece] . unBoard
+
+movePieceTo :: Board -> AxialPoint -> AxialPoint -> Board
+movePieceTo board from to = addPiece piece to $ removeTopPiece from board
+  where piece = unsafeTopPieceAt board from
 
 removeTopPieceAt :: Board -> AxialPoint -> Board
 removeTopPieceAt (Board bmap) pos = Board $ Map.update tailOrDeath pos bmap
@@ -46,6 +66,8 @@ removeTopPieceAt (Board bmap) pos = Board $ Map.update tailOrDeath pos bmap
 
 topPieceAt :: Board -> AxialPoint -> Maybe Piece
 topPieceAt board pos = listToMaybe $ board `piecesAt` pos
+
+unsafeTopPieceAt = (fromJust .) . topPieceAt
 
 isOccupiedAt :: Board -> AxialPoint -> Bool
 isOccupiedAt board pos = not . null $ board `piecesAt` pos
@@ -117,7 +139,7 @@ instance Show a => Show (Graph.SCC a) where
     show (Graph.CyclicSCC xs) = "CyclicSCC " ++ show xs
 
 -- XXX total hack, does not support stacks!
-boardFromAscList = Board . Map.fromAscList . map (\((p,q), name) -> (Axial p q, [pieceFromName name]))
+boardFromAscList = Board . Map.fromAscList . map (\((p,q), name) -> (Axial p q, [piece name]))
 
 -- and here is where i miss clojure
 -- ghci destroys all bindings when you :r

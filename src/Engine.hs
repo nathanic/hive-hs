@@ -160,40 +160,63 @@ movesForSpecies species =
         QueenBee -> queenBeeMoves
         Spider -> spiderMoves
 
+-- could do [AbsoluteMove] instead but a hashmap is just more convenient for the client
 allMovesForGame :: Game -> Map Piece [AxialPoint]
 allMovesForGame game = Map.unionWith (<>) movemap (pillbugProcessing game)
   where
     board = gameBoard game
     freePoses = allFreePiecePositions board
-    movemap = foldl' (\acc pos -> Map.insert (board `unsafeTopPieceAt` pos)
-                                   (movesForPieceAtPosition board pos)
-                                   acc)
-                mempty
-                freePoses
+    movemap = foldl' buildMoveMap mempty freePoses
+    buildMoveMap acc pos =
+        case movesForPieceAtPosition board pos of
+            [] -> acc -- XXX can this ever happen?  we are only folding over
+                      -- free pieces, and free pieces must always have moves
+                      -- that'd be an interesting quickcheck property:
+                      -- generate random RelativeMoves, play the games
+                      -- and at every point assert that every free piece
+                      -- finds a nonzero amount of moves
+            moves -> Map.insert (board `unsafeTopPieceAt` pos) moves acc
+
+-- TODO: enforce queen rules
+-- must be placed within X turns
+-- no piece is free to move unless that team's queen is on the board
+-- maybe also that no opening with the queen rule?
 
 spawns :: Team -> Board -> [AxialPoint]
-spawns team board = do
-    friendly <- findTopPieces (\p -> pieceTeam p == team) board
-    emptyNabe <- unoccupiedNeighbors board friendly
-    guard $ not $ any (\pos -> pieceTeam (unsafeTopPieceAt board pos) == opposing team)
-          $ occupiedNeighbors board emptyNabe
-    return emptyNabe
+spawns team board =
+    case (team, findTopPieces ((== team) . pieceTeam) board) of
+        -- NB this assumes White always goes first
+        (White, []) -> [Axial 0 0]
+        -- but we do support any initial placement pos for white
+        (Black, []) -> Grid.neighbors $ head $ findTopPieces (const True) board
+        -- spawns are empty hexes that are both bordering friendlies and not bordering foes
+        (_, friendlies) -> [ emptyNabe
+                           | friendly <- friendlies
+                           , emptyNabe <- unoccupiedNeighbors board friendly
+                           , not $ any ((== opposing team) . pieceTeam . unsafeTopPieceAt board)
+                                 $ occupiedNeighbors board emptyNabe
+                           ]
 
-isValidMove :: Game -> Piece -> AxialPoint -> Bool
-isValidMove game piece pos = gameTurn game == pieceTeam piece && possible
-  where possible = elem pos $ fromMaybe [] (Map.lookup piece $ gamePossibleMoves game)
+-- it would be nice if this gave feedback on exactly why the move is invalid
+isValidMove :: Game -> AbsoluteMove -> Bool
+isValidMove game (AbsoluteMove piece pos) =
+    gameTurn game == pieceTeam piece && (firstMove || possibleMove || spawnMove)
+  where
+    firstMove = null $ gameMoves game
+    possibleMove = elem pos $ fromMaybe [] (Map.lookup piece $ gamePossibleMoves game)
+    spawnMove = elem piece (gameUnplaced game) && elem pos (gameSpawns game)
 
-applyMoveToBoard :: Piece -> AxialPoint -> Board -> Board
-applyMoveToBoard piece to board =
+applyMoveToBoard :: AbsoluteMove -> Board -> Board
+applyMoveToBoard (AbsoluteMove piece to) board =
     case findTopPieces (== piece) board of
         [] -> addPiece piece to board
         [from] -> movePieceTo board from to
         _ -> error "broken game! multiple instances of the same piece in the board."
 
-applyMove :: Piece -> AxialPoint -> Game -> Either String Game
-applyMove piece pos game
-    | isValidMove game piece pos = Right game'
-    | otherwise                  = Left "invalid move!"
+applyMove :: AbsoluteMove -> Game -> Either String Game
+applyMove move@(AbsoluteMove piece pos) game
+    | isValidMove game move = Right game'
+    | otherwise             = Left "invalid move!"
   where
     Game { gameBoard = board
          , gameMoves = history
@@ -207,7 +230,7 @@ applyMove piece pos game
                  , gameUnplaced = delete piece unplaced
                  , gameTurn = opposing turn
                  }
-    board' = applyMoveToBoard piece pos board
+    board' = applyMoveToBoard move board
 
 
 -- So, for the client side, I'm going to write my first purescript ever.
@@ -237,4 +260,11 @@ dummyGameFromBoard board = Game { gameId = 0
                                 , gameTurn = White
                                 , gameWinner = Nothing
                                 }
+
+
+g5 = dummyGameFromBoard example5
+Right g5' = applyMove (AbsoluteMove (piece "wS1") (Axial 0 0)) g5
+
+g = dummyGameFromBoard emptyBoard
+Right g' = applyMove (AbsoluteMove (piece "wS1") (Axial 0 0)) g
 

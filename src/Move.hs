@@ -5,7 +5,11 @@ module Move
     , parseMove
     ) where
 
--- this is mainly going to be about parsing and displaying moves in Hive notation
+-- this is mainly going to be about parsing and displaying moves in Hive notation.
+-- do i strictly need a parser? not really.
+-- but i haven't used Parsec in a long time, and parsing is fun.
+-- plus it'll be nice for testing/debugging to be able to construct games
+-- from move transcripts
 
 import Data.List (find)
 import Data.Maybe (fromJust)
@@ -36,22 +40,26 @@ data AbsoluteMove = AbsoluteMove { movePiece :: Piece
 -- translate it into a Move using the Board
 interpretMove :: Board -> RelativeMove -> AbsoluteMove
 interpretMove board (RelativeFirst mover) = AbsoluteMove mover (Axial 0 0)
-interpretMove board (RelativeMove mover target dir) = 
+interpretMove board (RelativeMove mover target dir) =
     AbsoluteMove mover (head $ findTopPieces (== target) board)
+    -- XXX should probably do something safer than head here
+    -- maybe we return a Maybe or something?
 
 parseMove :: String -> Either ParseError RelativeMove
 parseMove = parse moveP "MOVE"
 
 moveP :: CharParser st RelativeMove
-moveP = try nonFirstMoveP <|> firstMoveP
+moveP = do
+    spaces
+    try (firstMoveP <* softEnding) <|> (subsequentMoveP <* softEnding)
 
 firstMoveP :: CharParser st RelativeMove
 firstMoveP = RelativeFirst <$> pieceP
 
-nonFirstMoveP :: CharParser st RelativeMove
-nonFirstMoveP = do
+subsequentMoveP :: CharParser st RelativeMove
+subsequentMoveP = do
     mover <- pieceP
-    spaces
+    many1 space
     (orient, target) <- flipFlop orientP pieceP
     return $ RelativeMove mover target (orientToDirection orient)
 
@@ -63,12 +71,14 @@ pieceP = do
 orientP :: CharParser st Char
 orientP = char '/' <|> char '-' <|> char '\\'
 
--- | try ab, and if that fails try ba.
+-- | try ab, and if that fails do ba.
 -- | encodes the position of `a` by returning an Either.
 flipFlop :: GenParser tok st a -> GenParser tok st b -> GenParser tok st (Either a a, b)
 flipFlop a b =
     try ( (,) <$> (Left <$> a) <*> b)
         <|> (flip (,) <$> b <*> (Right <$> a))
+
+softEnding = spaces >> eof
 
 -- | this results in the direction from the old piece to the new piece
 orientToDirection :: Either Char Char -> Direction

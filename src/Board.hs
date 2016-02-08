@@ -128,8 +128,8 @@ connectedComponents :: Ord key => [(node,key,[key])] -> [[node]]
 connectedComponents adjlist = deforest $ Graph.components g
   where
     (g,vertexInfo,_) = Graph.graphFromEdges adjlist
-    fst3 (x,_,_) = x
     deforest = map (map (fst3 . vertexInfo) . Tree.flatten)
+    fst3 (x,_,_) = x
 
 --------------------------------------------------------------------------------
 -- Debug Helpers and REPL scratch
@@ -140,6 +140,8 @@ instance Show a => Show (Graph.SCC a) where
 
 -- XXX total hack, does not support stacks!
 boardFromAscList = Board . Map.fromAscList . map (\((p,q), name) -> (Axial p q, [piece name]))
+
+emptyBoard = Board mempty
 
 -- and here is where i miss clojure
 -- ghci destroys all bindings when you :r
@@ -189,6 +191,7 @@ example5 = boardFromAscList
   , ((4,3), "bQ")
   , ((4,4), "bG1")
   ]
+
 
 -- YO NATHAN
 -- READ THIS

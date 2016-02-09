@@ -2,11 +2,11 @@ module Engine where
 
 import Control.Category ((>>>))
 import Control.Monad (guard)
-import Data.List (find, nub, delete, foldl')
+import Data.List (find, nub, delete, foldl', sort)
 import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromJust, fromMaybe)
+import Data.Maybe (isJust, fromJust, fromMaybe)
 import Data.Monoid ((<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -18,6 +18,10 @@ import Piece
 import Board
 import Move
 
+-- TODO: move test stuff out to test dirs
+import Test.QuickCheck
+import Debug.Trace
+
 -- Start with the types!
 
 data Game = Game { gameId :: Integer -- TODO: fancier ID type?
@@ -26,7 +30,8 @@ data Game = Game { gameId :: Integer -- TODO: fancier ID type?
                  , gameUnplaced :: [Piece] -- Set?
                  , gameMoves :: [AbsoluteMove] -- move history
                  , gamePossibleMoves :: Map Piece [AxialPoint]
-                 , gameSpawns :: [AxialPoint]
+                 , gameSpawnPositions :: [AxialPoint]
+                 , gameSpawnablePieces :: [Piece]
                  , gameTurn :: Team
                  , gameWinner :: Maybe Team
                  -- TODO: players' user account reference of some kind?
@@ -104,6 +109,7 @@ mosquitoMoves board origin
 pillbugMoves = planarPassableNeighbors
 
 -- pillbug requires out-of-band handling since it alone can move other pieces around
+-- TODO: support mosquitos that can act as pillbugs
 pillbugProcessing :: Game -> Map Piece [AxialPoint]
 pillbugProcessing game = Map.unionsWith (<>) (handlePillbug <$> pillbugPoses)
   where
@@ -182,8 +188,8 @@ allMovesForGame game = Map.unionWith (<>) movemap (pillbugProcessing game)
 -- no piece is free to move unless that team's queen is on the board
 -- maybe also that no opening with the queen rule?
 
-spawns :: Team -> Board -> [AxialPoint]
-spawns team board =
+spawnPositions :: Team -> Board -> [AxialPoint]
+spawnPositions team board =
     case (team, findTopPieces ((== team) . pieceTeam) board) of
         -- NB this assumes White always goes first
         (White, []) -> [Axial 0 0]
@@ -197,14 +203,27 @@ spawns team board =
                                  $ occupiedNeighbors board emptyNabe
                            ]
 
+
+spawnablePieces :: Game -> [Piece]
+spawnablePieces game
+    | turnNo == 1                    = filter (not . isQueen) unplacedFriendlies
+    | turnNo == 4 && queenIsUnplaced = filter isQueen unplacedFriendlies
+    | otherwise                      = unplacedFriendlies
+  where
+    turnNo = length (gameMoves game) `div` 2 + 1 -- this player's 1-based turn #
+    queenIsUnplaced = isJust $ find isQueen unplacedFriendlies
+    unplacedFriendlies = filter isFriendly $ gameUnplaced game
+    isFriendly = (== gameTurn game) . pieceTeam
+    isQueen = (== QueenBee) . pieceSpecies
+
 -- it would be nice if this gave feedback on exactly why the move is invalid
 isValidMove :: Game -> AbsoluteMove -> Bool
 isValidMove game (AbsoluteMove piece pos) =
-    gameTurn game == pieceTeam piece && (firstMove || possibleMove || spawnMove)
+    gameTurn game == pieceTeam piece && (firstMove || boardMove || spawnMove)
   where
     firstMove = null $ gameMoves game
-    possibleMove = elem pos $ fromMaybe [] (Map.lookup piece $ gamePossibleMoves game)
-    spawnMove = elem piece (gameUnplaced game) && elem pos (gameSpawns game)
+    boardMove = elem pos $ fromMaybe [] (Map.lookup piece $ gamePossibleMoves game)
+    spawnMove = elem piece (gameUnplaced game) && elem pos (gameSpawnPositions game)
 
 applyMoveToBoard :: AbsoluteMove -> Board -> Board
 applyMoveToBoard (AbsoluteMove piece to) board =
@@ -225,8 +244,9 @@ applyMove move@(AbsoluteMove piece pos) game
          } = game
     game' = game { gameBoard = board'
                  , gameMoves = history <> [AbsoluteMove piece pos]
-                 , gamePossibleMoves = allMovesForGame game' -- circular!
-                 , gameSpawns = spawns (opposing turn) board'
+                 , gamePossibleMoves = allMovesForGame game'    -- tied the knot!
+                 , gameSpawnablePieces = spawnablePieces game'  -- yay circularity
+                 , gameSpawnPositions = spawnPositions (opposing turn) board'
                  , gameUnplaced = delete piece unplaced
                  , gameTurn = opposing turn
                  }
@@ -256,7 +276,8 @@ dummyGameFromBoard board = Game { gameId = 0
                                 , gameUnplaced = findUnplaced board
                                 , gameMoves = []
                                 , gamePossibleMoves = mempty
-                                , gameSpawns = []
+                                , gameSpawnPositions = []
+                                , gameSpawnablePieces = [] -- XXX horrible
                                 , gameTurn = White
                                 , gameWinner = Nothing
                                 }
@@ -267,4 +288,63 @@ Right g5' = applyMove (AbsoluteMove (piece "wS1") (Axial 0 0)) g5
 
 g = dummyGameFromBoard emptyBoard
 Right g' = applyMove (AbsoluteMove (piece "wS1") (Axial 0 0)) g
+
+
+
+
+
+
+--------------------------------------------------------------------------------
+-- QuickCheck stuff that doesn't really belong here
+-- but i'm rusty on qc so i'm just trying it out here for now
+-- eventually planning on Tasty, maybe with hspec and qc
+
+
+isValidRelativeMove game (RelativeFirst _) = gameBoard game == emptyBoard
+isValidRelativeMove game rel@(RelativeMove mover target dir) = trace ("trying move: " ++ show rel ++ "\n") $
+    elem target (allPiecesOnBoard board) && isValidMove game absMove
+  where
+    board = gameBoard game
+    absMove = interpretMove board rel
+
+instance Arbitrary Piece where
+  arbitrary = elements allPieces
+
+instance Arbitrary Grid.Direction where
+  arbitrary = elements Grid.allDirections
+
+instance Arbitrary RelativeMove where
+  arbitrary = do
+    p1 <- arbitrary
+    p2 <- arbitrary `suchThat` (/= p1)
+    RelativeMove p1 p2 <$> arbitrary
+
+instance Arbitrary Game where
+    arbitrary = do
+        moveCount <- arbitrarySizedNatural
+        firstPiece <- elements $ filter ((== White) . pieceTeam) allPieces
+        let game = dummyGameFromBoard emptyBoard
+            abs = interpretMove (gameBoard game) (RelativeFirst firstPiece)
+            Right game' = applyMove abs game
+        doMoves (10+moveCount) game'
+      where
+        doMoves 0 g = return g
+        doMoves n g@Game{gameBoard=board} = do
+            direction <- arbitrary
+            mover <- elements $ filter ((== gameTurn g) . pieceTeam) allPieces
+            target <- elements (allPiecesOnBoard board)
+            let move = RelativeMove mover target direction
+            if not $ isValidRelativeMove g move
+                then discard
+                else doMoves (n-1)
+                             (either (const g) id
+                                  $ applyMove (interpretMove board move) g)
+
+prop_piecesConserved = property $ \g ->
+    sort allPieces == sort (allPiecesOnBoard (gameBoard g) <> gameUnplaced g)
+
+prop_freePiecesAlwaysHaveMoves = property $ \g ->
+    let board = gameBoard g
+        freePoses = allFreePiecePositions board
+     in all (not . null) $ map (movesForPieceAtPosition board) freePoses
 

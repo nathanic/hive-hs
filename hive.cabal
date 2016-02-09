@@ -1,12 +1,12 @@
 name:                hive
 version:             0.1.0.0
-synopsis:            Simple project template from stack
+synopsis:            Server component for an online version of the board game Hive
 description:         Please see README.md
-homepage:            http://github.com/githubuser/hive#readme
+homepage:            http://github.com/nathanic/hive-hs#readme
 license:             BSD3
 license-file:        LICENSE
-author:              Author name here
-maintainer:          example@example.com
+author:              Nathan Stien
+maintainer:          nathanism@gmail.com
 copyright:           2010 Author Here
 category:            Web
 build-type:          Simple
@@ -19,3 +19,4 @@ executable hive
   build-depends:       base >= 4.7 && < 5
                      , containers
                      , parsec
+                     , QuickCheck

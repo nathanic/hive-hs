@@ -1,6 +1,6 @@
 module Move
     ( AbsoluteMove(..)
-    , RelativeMove
+    , RelativeMove(..)
     , interpretMove
     , parseMove
     ) where

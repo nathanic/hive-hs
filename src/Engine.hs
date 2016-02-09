@@ -168,14 +168,21 @@ movesForSpecies species =
 
 -- could do [AbsoluteMove] instead but a hashmap is just more convenient for the client
 allMovesForGame :: Game -> Map Piece [AxialPoint]
-allMovesForGame game = Map.unionWith (<>) movemap (pillbugProcessing game)
+allMovesForGame game 
+    | queenIsUnplaced = mempty
+    | otherwise       = Map.unionWith (<>) movemap (pillbugProcessing game)
   where
+    queenIsUnplaced = isJust $ find isQueenBee $ unplacedThisTurn game
     board = gameBoard game
-    freePoses = allFreePiecePositions board
+    thisTeam = gameTurn game
+    freePoses = freePiecePositionsForTeam thisTeam board
     movemap = foldl' buildMoveMap mempty freePoses
     buildMoveMap acc pos =
         case movesForPieceAtPosition board pos of
-            [] -> acc -- XXX can this ever happen?  we are only folding over
+            [] -> error ("OMFG CALCULATED EMPTY MOVELIST FOR SUPPOSED FREE PIECE!\n\
+                         \game:" ++ show game ++ "\npiece pos: " ++ show pos ++ "\n")
+                -- acc
+                      -- XXX can this ever happen?  we are only folding over
                       -- free pieces, and free pieces must always have moves
                       -- that'd be an interesting quickcheck property:
                       -- generate random RelativeMoves, play the games
@@ -183,10 +190,6 @@ allMovesForGame game = Map.unionWith (<>) movemap (pillbugProcessing game)
                       -- finds a nonzero amount of moves
             moves -> Map.insert (board `unsafeTopPieceAt` pos) moves acc
 
--- TODO: enforce queen rules
--- must be placed within X turns
--- no piece is free to move unless that team's queen is on the board
--- maybe also that no opening with the queen rule?
 
 spawnPositions :: Team -> Board -> [AxialPoint]
 spawnPositions team board =
@@ -206,15 +209,18 @@ spawnPositions team board =
 
 spawnablePieces :: Game -> [Piece]
 spawnablePieces game
-    | turnNo == 1                    = filter (not . isQueen) unplacedFriendlies
-    | turnNo == 4 && queenIsUnplaced = filter isQueen unplacedFriendlies
+    | turnNo == 1                    = filter (not . isQueenBee) unplacedFriendlies
+    | turnNo == 4 && queenIsUnplaced = filter isQueenBee unplacedFriendlies
     | otherwise                      = unplacedFriendlies
   where
     turnNo = length (gameMoves game) `div` 2 + 1 -- this player's 1-based turn #
-    queenIsUnplaced = isJust $ find isQueen unplacedFriendlies
-    unplacedFriendlies = filter isFriendly $ gameUnplaced game
+    unplacedFriendlies = unplacedThisTurn game
+    queenIsUnplaced = isJust $ find isQueenBee unplacedFriendlies
     isFriendly = (== gameTurn game) . pieceTeam
-    isQueen = (== QueenBee) . pieceSpecies
+
+-- TODO: move these somewhere they belong
+isQueenBee = (== QueenBee) . pieceSpecies
+unplacedThisTurn game = filter ((== gameTurn game) . pieceTeam) $ gameUnplaced game
 
 -- it would be nice if this gave feedback on exactly why the move is invalid
 isValidMove :: Game -> AbsoluteMove -> Bool

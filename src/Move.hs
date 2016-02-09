@@ -22,6 +22,7 @@ import Piece
 
 
 -- | the traditional notational representation for Hive moves
+-- TODO: support special pillbug notation
 data RelativeMove = RelativeMove { moverPiece :: Piece
                                  , targetPiece :: Piece
                                  , dirFromTarget :: Direction
@@ -48,6 +49,7 @@ interpretMove board (RelativeMove mover target dir) =
 parseMove :: String -> Either ParseError RelativeMove
 parseMove = parse moveP "MOVE"
 
+-- TODO: support special pillbug notation
 moveP :: CharParser st RelativeMove
 moveP = do
     spaces

@@ -104,6 +104,11 @@ pieceIsFree board pos = isOneHive (board `removeTopPieceAt` pos)
 allFreePiecePositions :: Board -> [AxialPoint]
 allFreePiecePositions board = filter (pieceIsFree board) $ allOccupiedPositions board
 
+freePiecePositionsForTeam :: Team -> Board -> [AxialPoint]
+freePiecePositionsForTeam team board =
+    filter (\p -> pieceTeam (unsafeTopPieceAt board p) == team && pieceIsFree board p)
+        $ allOccupiedPositions board
+
 -- convert a board (map of axial coords to Pieces) into a Data.Graph style adjacency list
 -- each vertex is a piece's axial coordinates
 -- each piece has edges to its occupied neighbors

@@ -23,6 +23,7 @@ import Data.List (nub)
 import Data.Maybe (isJust, listToMaybe, fromJust, fromMaybe)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Monoid ((<>))
 import qualified Data.Tree as Tree
 
 -- defensive programming: hide the details of the Board type
@@ -40,21 +41,11 @@ isStacked board pos =
         (_:_:_) -> True
         _       -> False
 
-removePieces :: AxialPoint -> Board -> Board
-removePieces pos = Board . Map.delete pos . unBoard
-
-safeTail :: [a] -> [a]
-safeTail [] = []
-safeTail (_:xs) = xs
-
-removeTopPiece :: AxialPoint -> Board -> Board
-removeTopPiece pos = Board . Map.adjust safeTail pos . unBoard
-
 addPiece :: Piece -> AxialPoint -> Board -> Board
 addPiece piece pos = Board . Map.insertWith (++) pos [piece] . unBoard
 
 movePieceTo :: Board -> AxialPoint -> AxialPoint -> Board
-movePieceTo board from to = addPiece piece to $ removeTopPiece from board
+movePieceTo board from to = addPiece piece to $ board `removeTopPieceAt` from
   where piece = unsafeTopPieceAt board from
 
 removeTopPieceAt :: Board -> AxialPoint -> Board
@@ -89,9 +80,13 @@ allPiecesOnBoard  = concat . Map.elems . unBoard
 findTopPieces :: (Piece -> Bool) -> Board -> [AxialPoint]
 findTopPieces f board = Map.foldlWithKey
                             (\acc pos pieces ->
-                                if f (head pieces)
-                                    then pos:acc
-                                    else acc)
+                                case pieces of
+                                    [] -> error  $ "found a board site with empty piecelist! "
+                                        <> show pos <> "\nboard with empty site: "
+                                        <> show board <> "\n"
+                                    (pc:_) -> if f pc
+                                        then pos:acc
+                                        else acc)
                             []
                             (unBoard board)
 

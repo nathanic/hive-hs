@@ -1,16 +1,17 @@
 module Engine where
 
 import Control.Category ((>>>))
-import Control.Monad (guard)
-import Data.List (find, nub, delete, foldl', sort)
+import Control.Monad (guard, foldM)
+
+import Data.List (find, nub, delete, foldl', maximumBy, sort)
 import qualified Data.List as List
+import Data.Function (on)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust, fromJust, fromMaybe)
 import Data.Monoid ((<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
-import qualified Text.ParserCombinators.Parsec as Parsec
 
 import HexGrid (AxialPoint(..))
 import qualified HexGrid as Grid
@@ -24,20 +25,16 @@ import Debug.Trace
 
 -- Start with the types!
 
-data Game = Game { gameId :: Integer -- TODO: fancier ID type?
-                 , gameTitle :: String
-                 , gameBoard :: Board
+data Game = Game { gameBoard :: Board
                  , gameUnplaced :: [Piece] -- Set?
                  , gameMoves :: [AbsoluteMove] -- move history
+                 -- maybe the name should reflect that this is only board moves (not spawns)
                  , gamePossibleMoves :: Map Piece [AxialPoint]
-                 , gameSpawnPositions :: [AxialPoint]
                  , gameSpawnablePieces :: [Piece]
+                 , gameSpawnPositions :: [AxialPoint]
                  , gameTurn :: Team
                  , gameWinner :: Maybe Team
-                 -- TODO: players' user account reference of some kind?
                  } deriving (Eq, Show)
-
-
 
 -- | determine if two adjacent positions are planar-passable (not gated)
 -- | XXX: only considers the bottommost plane! does not consider movement atop the hive
@@ -49,7 +46,7 @@ isPlanarPassable board from to =
     && (board' `isOccupiedAt` gate1) /= (board' `isOccupiedAt` gate2)
   where
     -- board' removes considered piece from the board
-    board' = removeTopPiece from board
+    board' = board `removeTopPieceAt` from
     (gate1,gate2) = Grid.gatePositions from to
 
 planarPassableNeighbors :: Board -> AxialPoint -> [AxialPoint]
@@ -168,26 +165,21 @@ movesForSpecies species =
 
 -- could do [AbsoluteMove] instead but a hashmap is just more convenient for the client
 allMovesForGame :: Game -> Map Piece [AxialPoint]
-allMovesForGame game 
+allMovesForGame game
     | queenIsUnplaced = mempty
     | otherwise       = Map.unionWith (<>) movemap (pillbugProcessing game)
   where
-    queenIsUnplaced = isJust $ find isQueenBee $ unplacedThisTurn game
+    queenIsUnplaced = isJust $ find isQueenBee $ thisTeamUnplaced game
     board = gameBoard game
     thisTeam = gameTurn game
     freePoses = freePiecePositionsForTeam thisTeam board
     movemap = foldl' buildMoveMap mempty freePoses
     buildMoveMap acc pos =
         case movesForPieceAtPosition board pos of
-            [] -> error ("OMFG CALCULATED EMPTY MOVELIST FOR SUPPOSED FREE PIECE!\n\
-                         \game:" ++ show game ++ "\npiece pos: " ++ show pos ++ "\n")
-                -- acc
-                      -- XXX can this ever happen?  we are only folding over
-                      -- free pieces, and free pieces must always have moves
-                      -- that'd be an interesting quickcheck property:
-                      -- generate random RelativeMoves, play the games
-                      -- and at every point assert that every free piece
-                      -- finds a nonzero amount of moves
+            [] -> acc
+                    -- sooooo, i think this happens when a piece is "free" in terms of
+                    -- the board graph (is not an articulation point), but can't move due to being gated
+                    -- TODO: maybe rename stuff to clarify what sense of "free" we are talking about
             moves -> Map.insert (board `unsafeTopPieceAt` pos) moves acc
 
 
@@ -197,7 +189,10 @@ spawnPositions team board =
         -- NB this assumes White always goes first
         (White, []) -> [Axial 0 0]
         -- but we do support any initial placement pos for white
-        (Black, []) -> Grid.neighbors $ head $ findTopPieces (const True) board
+        -- (Black, []) -> Grid.neighbors $ (trace "\n\nspawn calcs\n\n" head) $ findTopPieces (const True) board
+        (Black, []) -> case findTopPieces (const True) board of
+                                [] -> error $ "findTopPieces (const True) found nothing on black turn! board: " <> show board
+                                (pos:_) -> Grid.neighbors pos
         -- spawns are empty hexes that are both bordering friendlies and not bordering foes
         (_, friendlies) -> [ emptyNabe
                            | friendly <- friendlies
@@ -214,13 +209,13 @@ spawnablePieces game
     | otherwise                      = unplacedFriendlies
   where
     turnNo = length (gameMoves game) `div` 2 + 1 -- this player's 1-based turn #
-    unplacedFriendlies = unplacedThisTurn game
+    unplacedFriendlies = thisTeamUnplaced game
     queenIsUnplaced = isJust $ find isQueenBee unplacedFriendlies
     isFriendly = (== gameTurn game) . pieceTeam
 
 -- TODO: move these somewhere they belong
 isQueenBee = (== QueenBee) . pieceSpecies
-unplacedThisTurn game = filter ((== gameTurn game) . pieceTeam) $ gameUnplaced game
+thisTeamUnplaced game = filter ((== gameTurn game) . pieceTeam) $ gameUnplaced game
 
 -- it would be nice if this gave feedback on exactly why the move is invalid
 isValidMove :: Game -> AbsoluteMove -> Bool
@@ -241,7 +236,9 @@ applyMoveToBoard (AbsoluteMove piece to) board =
 applyMove :: AbsoluteMove -> Game -> Either String Game
 applyMove move@(AbsoluteMove piece pos) game
     | isValidMove game move = Right game'
-    | otherwise             = Left "invalid move!"
+    | otherwise             = Left $ "invalid move: " <> show move 
+                                        <> "\ngame for invalid move: " <> show game
+                                        <> "\n"
   where
     Game { gameBoard = board
          , gameMoves = history
@@ -275,29 +272,16 @@ applyMove move@(AbsoluteMove piece pos) game
 
 findUnplaced board = allPieces List.\\ allPiecesOnBoard board
 
-dummyGameFromBoard :: Board -> Game
-dummyGameFromBoard board = Game { gameId = 0
-                                , gameTitle = "dummy"
-                                , gameBoard = board
-                                , gameUnplaced = findUnplaced board
-                                , gameMoves = []
-                                , gamePossibleMoves = mempty
-                                , gameSpawnPositions = []
-                                , gameSpawnablePieces = [] -- XXX horrible
-                                , gameTurn = White
-                                , gameWinner = Nothing
-                                }
 
-
-g5 = dummyGameFromBoard example5
-Right g5' = applyMove (AbsoluteMove (piece "wS1") (Axial 0 0)) g5
-
-g = dummyGameFromBoard emptyBoard
-Right g' = applyMove (AbsoluteMove (piece "wS1") (Axial 0 0)) g
-
-
-
-
+newGame = Game { gameBoard = emptyBoard
+               , gameUnplaced = allPieces
+               , gameMoves = []
+               , gamePossibleMoves = allMovesForGame newGame
+               , gameSpawnPositions = [Axial 0 0]
+               , gameSpawnablePieces = filter (not . isQueenBee) $ thisTeamUnplaced newGame
+               , gameTurn = White
+               , gameWinner = Nothing
+               }
 
 
 --------------------------------------------------------------------------------
@@ -305,6 +289,7 @@ Right g' = applyMove (AbsoluteMove (piece "wS1") (Axial 0 0)) g
 -- but i'm rusty on qc so i'm just trying it out here for now
 -- eventually planning on Tasty, maybe with hspec and qc
 
+traceM_ s = trace s $ return ()
 
 isValidRelativeMove game (RelativeFirst _) = gameBoard game == emptyBoard
 isValidRelativeMove game rel@(RelativeMove mover target dir) = trace ("trying move: " ++ show rel ++ "\n") $
@@ -313,38 +298,35 @@ isValidRelativeMove game rel@(RelativeMove mover target dir) = trace ("trying mo
     board = gameBoard game
     absMove = interpretMove board rel
 
-instance Arbitrary Piece where
-  arbitrary = elements allPieces
-
-instance Arbitrary Grid.Direction where
-  arbitrary = elements Grid.allDirections
-
-instance Arbitrary RelativeMove where
-  arbitrary = do
-    p1 <- arbitrary
-    p2 <- arbitrary `suchThat` (/= p1)
-    RelativeMove p1 p2 <$> arbitrary
-
 instance Arbitrary Game where
     arbitrary = do
         moveCount <- arbitrarySizedNatural
-        firstPiece <- elements $ filter ((== White) . pieceTeam) allPieces
-        let game = dummyGameFromBoard emptyBoard
-            abs = interpretMove (gameBoard game) (RelativeFirst firstPiece)
-            Right game' = applyMove abs game
-        doMoves (10+moveCount) game'
+        doMoves moveCount newGame
       where
         doMoves 0 g = return g
         doMoves n g@Game{gameBoard=board} = do
-            direction <- arbitrary
-            mover <- elements $ filter ((== gameTurn g) . pieceTeam) allPieces
-            target <- elements (allPiecesOnBoard board)
-            let move = RelativeMove mover target direction
-            if not $ isValidRelativeMove g move
-                then discard
-                else doMoves (n-1)
-                             (either (const g) id
-                                  $ applyMove (interpretMove board move) g)
+            move <- elements $ allPossibleAbsoluteMoves g
+            case applyMove move g of
+                Left err -> do
+                    traceM_ $ "failed to apply move " <> show move
+                                <> " to game " <> show g <> "\n"
+                    discard
+                Right g' -> doMoves (n-1) g'
+
+allPossibleAbsoluteMoves :: Game -> [AbsoluteMove]
+allPossibleAbsoluteMoves game = spawnMoves <> boardMoves
+  where
+    spawnMoves = [AbsoluteMove pc pos
+                 | pc <- gameSpawnablePieces game
+                 , pos <- gameSpawnPositions game
+                 ]
+    boardMoves = [AbsoluteMove pc pos
+                 | (pc,poses) <- Map.toList $ gamePossibleMoves game
+                 , pos <- poses
+                 ]
+    -- might just go to this as a base representation
+    -- using a flat list of [AbsoluteMove] would eliminate the need for gameSpawnablePieces
+    -- would also make representing special pillbug notation easier
 
 prop_piecesConserved = property $ \g ->
     sort allPieces == sort (allPiecesOnBoard (gameBoard g) <> gameUnplaced g)
@@ -353,4 +335,33 @@ prop_freePiecesAlwaysHaveMoves = property $ \g ->
     let board = gameBoard g
         freePoses = allFreePiecePositions board
      in all (not . null) $ map (movesForPieceAtPosition board) freePoses
+
+prop_validMovesLeadToValidBoards = property $ \Game {gameBoard=board} ->
+    board == emptyBoard || isValidBoard board
+
+-- TODO: fn to walk through a Game and produce a human-readable transcript
+
+-- ooh, it should be possible, givem a Game, to replay it and enforce a Property
+-- on the Game at each step
+
+enforceForEntireReplay :: Game -> (Game -> Bool) -> Bool
+enforceForEntireReplay game pred = all pred $ decomposeGame game
+
+decomposeGame :: Game -> [Game]
+decomposeGame origGame = 
+    -- map (fromRight . flip applyMovesToGame) $ reverse $ tails $ (gameMoves game)
+    foldl' doMove [] (gameMoves origGame) 
+    where
+        doMove []    move = [fromRight $ applyMove move newGame]
+        doMove games move = fromRight (applyMove move (last games)) : games
+
+applyMovesToGame :: [AbsoluteMove] -> Game -> Either String Game
+applyMovesToGame moves game = foldM (flip applyMove) game moves
+
+fromRight (Right x) = x
+fromRight err = error "fromRight (Left x)\n"
+
+-- repl testing; grab the largest game from a sample batch
+sampleBigGame :: IO Game
+sampleBigGame = maximumBy (compare `on` length . gameMoves) <$> sample' arbitrary
 

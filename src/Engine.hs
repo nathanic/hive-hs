@@ -3,12 +3,12 @@ module Engine where
 import Control.Category ((>>>))
 import Control.Monad (guard, foldM)
 
-import Data.List (find, nub, delete, foldl', maximumBy, sort)
+import Data.List (find, nub, delete, foldl', maximumBy, sort, inits)
 import qualified Data.List as List
 import Data.Function (on)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isJust, fromJust, fromMaybe)
+import Data.Maybe (isJust, fromJust, fromMaybe, listToMaybe)
 import Data.Monoid ((<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -194,12 +194,27 @@ spawnPositions team board =
                                 [] -> error $ "findTopPieces (const True) found nothing on black turn! board: " <> show board
                                 (pos:_) -> Grid.neighbors pos
         -- spawns are empty hexes that are both bordering friendlies and not bordering foes
-        (_, friendlies) -> [ emptyNabe
-                           | friendly <- friendlies
-                           , emptyNabe <- unoccupiedNeighbors board friendly
-                           , not $ any ((== opposing team) . pieceTeam . unsafeTopPieceAt board)
-                                 $ occupiedNeighbors board emptyNabe
-                           ]
+        (_, friendlies) ->
+                           -- [ emptyNabe
+                           -- | friendly <- friendlies
+                           -- , emptyNabe <- unoccupiedNeighbors board friendly
+                           -- , not $ any ((== opposing team) . pieceTeam . unsafeTopPieceAt board)
+                           --       $ occupiedNeighbors board emptyNabe
+                           -- ]
+                           let friendlyEmpties  = Set.fromList $
+                                                    findTopPieces ((== team). pieceTeam) board
+                                                        >>= unoccupiedNeighbors board
+                               foeEmpties       = Set.fromList $
+                                                    findTopPieces ((== opposing team). pieceTeam) board
+                                                        >>= unoccupiedNeighbors board
+
+                            in Set.toList $ Set.difference friendlyEmpties foeEmpties
+
+hexTouchesTeam :: Board -> Team -> AxialPoint -> Bool
+hexTouchesTeam board team pos =
+    any ((== team) . pieceTeam . unsafeTopPieceAt board)
+        $ occupiedNeighbors board pos
+
 
 
 spawnablePieces :: Game -> [Piece]
@@ -236,7 +251,7 @@ applyMoveToBoard (AbsoluteMove piece to) board =
 applyMove :: AbsoluteMove -> Game -> Either String Game
 applyMove move@(AbsoluteMove piece pos) game
     | isValidMove game move = Right game'
-    | otherwise             = Left $ "invalid move: " <> show move 
+    | otherwise             = Left $ "invalid move: " <> show move
                                         <> "\ngame for invalid move: " <> show game
                                         <> "\n"
   where
@@ -289,7 +304,7 @@ newGame = Game { gameBoard = emptyBoard
 -- but i'm rusty on qc so i'm just trying it out here for now
 -- eventually planning on Tasty, maybe with hspec and qc
 
-traceM_ s = trace s $ return ()
+traceM_ s = trace (s <> "\n") $ return ()
 
 isValidRelativeMove game (RelativeFirst _) = gameBoard game == emptyBoard
 isValidRelativeMove game rel@(RelativeMove mover target dir) = trace ("trying move: " ++ show rel ++ "\n") $
@@ -328,15 +343,15 @@ allPossibleAbsoluteMoves game = spawnMoves <> boardMoves
     -- using a flat list of [AbsoluteMove] would eliminate the need for gameSpawnablePieces
     -- would also make representing special pillbug notation easier
 
-prop_piecesConserved = property $ \g ->
+prop_piecesConserved g =
     sort allPieces == sort (allPiecesOnBoard (gameBoard g) <> gameUnplaced g)
 
-prop_freePiecesAlwaysHaveMoves = property $ \g ->
+prop_freePiecesAlwaysHaveMoves g =
     let board = gameBoard g
         freePoses = allFreePiecePositions board
      in all (not . null) $ map (movesForPieceAtPosition board) freePoses
 
-prop_validMovesLeadToValidBoards = property $ \Game {gameBoard=board} ->
+prop_validMovesLeadToValidBoards Game{gameBoard=board} =
     board == emptyBoard || isValidBoard board
 
 -- TODO: fn to walk through a Game and produce a human-readable transcript
@@ -348,12 +363,12 @@ enforceForEntireReplay :: Game -> (Game -> Bool) -> Bool
 enforceForEntireReplay game pred = all pred $ decomposeGame game
 
 decomposeGame :: Game -> [Game]
-decomposeGame origGame = 
-    -- map (fromRight . flip applyMovesToGame) $ reverse $ tails $ (gameMoves game)
-    foldl' doMove [] (gameMoves origGame) 
-    where
-        doMove []    move = [fromRight $ applyMove move newGame]
-        doMove games move = fromRight (applyMove move (last games)) : games
+decomposeGame origGame =
+    map (fromRight . flip applyMovesToGame newGame) $ tail $ inits $ gameMoves origGame
+    -- foldl' doMove [] (gameMoves origGame)
+    -- where
+    --     doMove []    move = [fromRight $ applyMove move newGame]
+    --     doMove games move = fromRight (applyMove move (last games)) : games
 
 applyMovesToGame :: [AbsoluteMove] -> Game -> Either String Game
 applyMovesToGame moves game = foldM (flip applyMove) game moves
@@ -364,4 +379,24 @@ fromRight err = error "fromRight (Left x)\n"
 -- repl testing; grab the largest game from a sample batch
 sampleBigGame :: IO Game
 sampleBigGame = maximumBy (compare `on` length . gameMoves) <$> sample' arbitrary
+
+
+-- need a relative transcript thing now to debug this
+relativizeMove :: Game -> AbsoluteMove -> Maybe RelativeMove
+relativizeMove game (AbsoluteMove piece pos)
+    | 1 == length (gameMoves game) = Just $ RelativeFirst piece
+    | otherwise                    = do
+        let board = gameBoard game
+        -- traceM_ $ "pos: " <> show pos
+        target <- listToMaybe $ occupiedNeighbors board pos
+        -- traceM_ $ "target: " <> show target
+        targetPiece <- topPieceAt board target
+        -- traceM_ $ "targetPiece: " <> show targetPiece
+        dir <- Grid.findDirectionFromAxialPoints target pos
+        -- traceM_ $ "dir: " <> show dir
+        return $ RelativeMove piece targetPiece dir
+
+transcript :: Game -> [Maybe RelativeMove]
+transcript game = [ relativizeMove game (last . gameMoves $ game)
+                    | game <- decomposeGame game ]
 

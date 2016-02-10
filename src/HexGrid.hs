@@ -10,7 +10,10 @@ module HexGrid
     ) where
 
 import Data.Maybe (fromJust)
+import Data.Monoid ((<>))
 import Data.Tuple (swap)
+
+import Debug.Trace
 
 -- so we're using a pointy-top hex grid with an axial coordinate system
 -- http://www.redblobgames.com/grids/hexagons/#coordinates
@@ -97,6 +100,8 @@ gatePositions axA axB = (cubicToAxial gate1, cubicToAxial gate2)
     gate1 = cuA `plus` rotate60 cuVec CW
     gate2 = cuA `plus` rotate60 cuVec CCW
 
+-- (\pq -> trace ("looking up: " <> show pq <> "\n" <>
+--                             show (pFrom,qFrom) <> " " <> show (qTo,pTo) <> "\n") pq)
 findDirectionFromAxialPoints :: AxialPoint -> AxialPoint -> Maybe Direction
 findDirectionFromAxialPoints (Axial pFrom qFrom) (Axial pTo qTo) =
     lookup (Axial (oneOrZero (pTo - pFrom)) (oneOrZero (qTo - qFrom)))

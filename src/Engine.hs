@@ -119,9 +119,7 @@ pillbugProcessing game = Map.unionsWith (<>) (handlePillbug <$> pillbugPoses)
                       , let Just piece = board `topPieceAt` pos
                       , didntJustMove piece]
           targets = unoccupiedNeighbors board pillbugPos -- XXX BUG does not check upper planar passability
-    -- XXX wait, is it the last TWO moves? need to check rules
     didntJustMove piece = null history || piece /= movePiece (last history)
-
 
 queenBeeMoves :: Board -> AxialPoint -> [AxialPoint]
 queenBeeMoves = planarPassableNeighbors
@@ -131,10 +129,10 @@ spiderMoves board origin = nub $ do
     dir <- Grid.allDirections
     let nabe = Grid.neighbor dir origin
     guard $ isPlanarPassable board origin nabe
-    dir <- filter (/= dir) Grid.allDirections
+    dir <- filter (/= Grid.opposite dir) Grid.allDirections
     let nabe2 = Grid.neighbor dir nabe
     guard $ isPlanarPassable board nabe nabe2
-    dir <- filter (/= dir) Grid.allDirections
+    dir <- filter (/= Grid.opposite dir) Grid.allDirections
     let nabe3 = Grid.neighbor dir nabe2
     guard $ isPlanarPassable board nabe2 nabe3
     return nabe3
@@ -327,6 +325,7 @@ instance Arbitrary Game where
                                 <> " to game " <> show g <> "\n"
                     discard
                 Right g' -> doMoves (n-1) g'
+    -- shrink = genericShrink
 
 allPossibleAbsoluteMoves :: Game -> [AbsoluteMove]
 allPossibleAbsoluteMoves game = spawnMoves <> boardMoves
@@ -387,16 +386,19 @@ relativizeMove game (AbsoluteMove piece pos)
     | 1 == length (gameMoves game) = Just $ RelativeFirst piece
     | otherwise                    = do
         let board = gameBoard game
-        -- traceM_ $ "pos: " <> show pos
+        -- traceM_ $ "[rM] pos: " <> show pos
         target <- listToMaybe $ occupiedNeighbors board pos
-        -- traceM_ $ "target: " <> show target
+        -- traceM_ $ "[rM] target: " <> show target
         targetPiece <- topPieceAt board target
-        -- traceM_ $ "targetPiece: " <> show targetPiece
+        -- traceM_ $ "[rM] targetPiece: " <> show targetPiece
         dir <- Grid.findDirectionFromAxialPoints target pos
-        -- traceM_ $ "dir: " <> show dir
+        -- traceM_ $ "[rM] dir: " <> show dir
         return $ RelativeMove piece targetPiece dir
 
 transcript :: Game -> [Maybe RelativeMove]
 transcript game = [ relativizeMove game (last . gameMoves $ game)
                     | game <- decomposeGame game ]
+
+transcript' :: Game -> [Maybe String]
+transcript' = ((describeMove <$>) <$>) . transcript
 

@@ -3,6 +3,7 @@ module Move
     , RelativeMove(..)
     , interpretMove
     , parseMove
+    , describeMove
     ) where
 
 -- this is mainly going to be about parsing and displaying moves in Hive notation.
@@ -13,6 +14,7 @@ module Move
 
 import Data.List (find)
 import Data.Maybe (fromJust)
+import Data.Monoid ((<>))
 import Text.ParserCombinators.Parsec
 
 import HexGrid (AxialPoint(..),Direction)
@@ -87,11 +89,26 @@ orientToDirection :: Either Char Char -> Direction
 orientToDirection (Left '/')   = Grid.SW
 orientToDirection (Left '-' )  = Grid.W
 orientToDirection (Left '\\')  = Grid.NW
-orientToDirection (Right '/')  = Grid.SE
+orientToDirection (Right '\\')  = Grid.SE
 orientToDirection (Right '-')  = Grid.E
-orientToDirection (Right '\\') = Grid.NE
+orientToDirection (Right '/') = Grid.NE
 
+--      \ /
+--    -- ⬢ --
+--      / \
 
--- next, the inverse: describe a move
--- we know the mover, we know target pos
--- need to find a target piece the orientation back to mover
+directionToOrient :: Direction -> (String, String)
+directionToOrient Grid.NE = ("","/")
+directionToOrient Grid.E = ("","-")
+directionToOrient Grid.SE = ("","\\")
+directionToOrient Grid.SW = ("/","")
+directionToOrient Grid.W = ("-","")
+directionToOrient Grid.NW = ("\\","")
+
+describeMove :: RelativeMove -> String
+describeMove (RelativeFirst pc) = show pc
+describeMove (RelativeMove mover target dir) = 
+    show mover <> " " <> pre <> show target <> post
+  where
+    (pre,post) = directionToOrient dir
+

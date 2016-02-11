@@ -3,12 +3,14 @@ module HexGrid
     , Direction(..)
     , allDirections
     , directionVectors
+    , opposite
     , neighbor
     , neighbors
     , gatePositions
     , findDirectionFromAxialPoints
     ) where
 
+import Data.Function (on)
 import Data.Maybe (fromJust)
 import Data.Monoid ((<>))
 import Data.Tuple (swap)
@@ -100,11 +102,16 @@ gatePositions axA axB = (cubicToAxial gate1, cubicToAxial gate2)
     gate1 = cuA `plus` rotate60 cuVec CW
     gate2 = cuA `plus` rotate60 cuVec CCW
 
--- (\pq -> trace ("looking up: " <> show pq <> "\n" <>
---                             show (pFrom,qFrom) <> " " <> show (qTo,pTo) <> "\n") pq)
+-- NB: assumes hexes are direct neighbors!
 findDirectionFromAxialPoints :: AxialPoint -> AxialPoint -> Maybe Direction
 findDirectionFromAxialPoints (Axial pFrom qFrom) (Axial pTo qTo) =
-    lookup (Axial (oneOrZero (pTo - pFrom)) (oneOrZero (qTo - qFrom)))
-        $ map swap directionVectors
-  where oneOrZero x = if x >= 1 then 1 else 0
+    lookup (Axial (pTo - pFrom) (qTo - qFrom)) $ map swap directionVectors
+
+-- (\pq -> trace ("looking up: (" <> show pq <> ") " <> show (pFrom,qFrom) <> " " <> show (pTo,qTo) <> "\n") pq) 
+
+  -- where  
+  --   normalize x
+  --       | x >= 1    = 1 
+  --       | x <= -1   = -1
+  --       | otherwise = 0
 

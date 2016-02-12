@@ -1,7 +1,11 @@
+-- {-# LANGUAGE DeriveGeneric #-}
+
 module Engine where
 
+-- import GHC.Generics
+
 import Control.Category ((>>>))
-import Control.Monad (guard, foldM)
+import Control.Monad (guard, foldM, when)
 
 import Data.List (find, nub, delete, foldl', maximumBy, sort, inits)
 import qualified Data.List as List
@@ -34,7 +38,10 @@ data Game = Game { gameBoard :: Board
                  , gameSpawnPositions :: [AxialPoint]
                  , gameTurn :: Team
                  , gameWinner :: Maybe Team
-                 } deriving (Eq, Show)
+                 } deriving (Eq
+                            , Show
+                            -- , Generic
+                            )
 
 -- | determine if two adjacent positions are planar-passable (not gated)
 -- | XXX: only considers the bottommost plane! does not consider movement atop the hive
@@ -116,6 +123,7 @@ pillbugProcessing game = Map.unionsWith (<>) (handlePillbug <$> pillbugPoses)
       where
           victims = [ piece
                       | pos <- occupiedNeighbors board pillbugPos
+                      , pieceIsFree board pos
                       , let Just piece = board `topPieceAt` pos
                       , didntJustMove piece]
           targets = unoccupiedNeighbors board pillbugPos -- XXX BUG does not check upper planar passability
@@ -124,17 +132,21 @@ pillbugProcessing game = Map.unionsWith (<>) (handlePillbug <$> pillbugPoses)
 queenBeeMoves :: Board -> AxialPoint -> [AxialPoint]
 queenBeeMoves = planarPassableNeighbors
 
+-- XXX something is still wrong with this
+-- just had a spider move out into empty space, translating SW by one hex
+-- from (-1,-4) to (-2, -3)
 spiderMoves :: Board -> AxialPoint -> [AxialPoint]
 spiderMoves board origin = nub $ do
+    let board' = removeTopPieceAt board origin
     dir <- Grid.allDirections
     let nabe = Grid.neighbor dir origin
-    guard $ isPlanarPassable board origin nabe
+    guard $ isPlanarPassable board' origin nabe
     dir <- filter (/= Grid.opposite dir) Grid.allDirections
     let nabe2 = Grid.neighbor dir nabe
-    guard $ isPlanarPassable board nabe nabe2
+    guard $ isPlanarPassable board' nabe nabe2
     dir <- filter (/= Grid.opposite dir) Grid.allDirections
     let nabe3 = Grid.neighbor dir nabe2
-    guard $ isPlanarPassable board nabe2 nabe3
+    guard $ isPlanarPassable board' nabe2 nabe3
     return nabe3
 
 -- | Precondition: piece at origin is free to move
@@ -318,14 +330,29 @@ instance Arbitrary Game where
       where
         doMoves 0 g = return g
         doMoves n g@Game{gameBoard=board} = do
-            move <- elements $ allPossibleAbsoluteMoves g
+            let moves = allPossibleAbsoluteMoves g
+            when (null moves) $ do
+                traceM_ $ "!!! there are no possible moves for game:\n" <> show g
+                discard
+            move <- elements moves
             case applyMove move g of
                 Left err -> do
+    -- XXX worrisomely, i DO see discarded cases sometimes...
                     traceM_ $ "failed to apply move " <> show move
                                 <> " to game " <> show g <> "\n"
                     discard
                 Right g' -> doMoves (n-1) g'
+    -- this is trying to do some structural stuff that requires Arbitrary on
+    -- everything in a Game, which won't work out for my approach of choosing
+    -- among precalculated valid moves
     -- shrink = genericShrink
+    -- i think to do shrink right, we'd have to just chop off some moves from
+    -- the history and recalculate the games up to that truncation
+    -- tried this but it didn't work out; QC just kept calculating shrinks
+    -- shrink g = safeChop $ decomposeGame g
+
+-- safeChop [] = []
+-- safeChop (_:xs) = xs
 
 allPossibleAbsoluteMoves :: Game -> [AbsoluteMove]
 allPossibleAbsoluteMoves game = spawnMoves <> boardMoves
@@ -381,6 +408,7 @@ sampleBigGame = maximumBy (compare `on` length . gameMoves) <$> sample' arbitrar
 
 
 -- need a relative transcript thing now to debug this
+-- TODO: don't have beetle moves reference the piece it's sitting on top of
 relativizeMove :: Game -> AbsoluteMove -> Maybe RelativeMove
 relativizeMove game (AbsoluteMove piece pos)
     | 1 == length (gameMoves game) = Just $ RelativeFirst piece

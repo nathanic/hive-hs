@@ -1,4 +1,4 @@
-module HexGrid
+module Hive.HexGrid
     ( AxialPoint(..)
     , Direction(..)
     , allDirections

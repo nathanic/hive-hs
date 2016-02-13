@@ -1,4 +1,4 @@
-module Move
+module Hive.Move
     ( AbsoluteMove(..)
     , RelativeMove(..)
     , interpretMove
@@ -17,10 +17,10 @@ import Data.Maybe (fromJust)
 import Data.Monoid ((<>))
 import Text.ParserCombinators.Parsec
 
-import HexGrid (AxialPoint(..),Direction)
-import qualified HexGrid as Grid
-import Board
-import Piece
+import Hive.HexGrid (AxialPoint(..),Direction)
+import qualified Hive.HexGrid as Grid
+import Hive.Board
+import Hive.Piece
 
 
 -- | the traditional notational representation for Hive moves

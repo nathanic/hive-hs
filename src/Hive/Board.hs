@@ -1,4 +1,4 @@
-module Board
+module Hive.Board
     -- (Board
     -- , allOccupiedPositions
     -- , isOccupiedAt
@@ -14,9 +14,9 @@ module Board
     -- )
     where
 
-import Piece
-import HexGrid (AxialPoint(..))
-import qualified HexGrid as Grid
+import Hive.Piece
+import Hive.HexGrid (AxialPoint(..))
+import qualified Hive.HexGrid as Grid
 
 import qualified Data.Graph as Graph
 import Data.List (nub)
@@ -67,21 +67,24 @@ isUnoccupiedAt :: Board -> AxialPoint -> Bool
 isUnoccupiedAt = (not .) . isOccupiedAt
 
 occupiedNeighbors :: Board -> AxialPoint -> [AxialPoint]
-occupiedNeighbors board pos = filter (board `isOccupiedAt`) $ Grid.neighbors pos
+occupiedNeighbors board = filter (board `isOccupiedAt`) . Grid.neighbors
 
 unoccupiedNeighbors :: Board -> AxialPoint -> [AxialPoint]
-unoccupiedNeighbors board pos = filter (board `isUnoccupiedAt`) $ Grid.neighbors pos
+unoccupiedNeighbors board = filter (board `isUnoccupiedAt`) . Grid.neighbors
 
 allOccupiedPositions :: Board -> [AxialPoint]
-allOccupiedPositions (Board bmap) = Map.keys bmap
+allOccupiedPositions = Map.keys . unBoard
 
 allPiecesOnBoard  = concat . Map.elems . unBoard
+
+findPieces :: (Piece -> Bool) -> Board -> [(AxialPoint, [Piece])]
+findPieces f = Map.toList . Map.filter (any f) . unBoard
 
 findTopPieces :: (Piece -> Bool) -> Board -> [AxialPoint]
 findTopPieces f board = Map.foldlWithKey
                             (\acc pos pieces ->
                                 case pieces of
-                                    [] -> error  $ "found a board site with empty piecelist! "
+                                    [] -> error $ "found a board site with empty piecelist! "
                                         <> show pos <> "\nboard with empty site: "
                                         <> show board <> "\n"
                                     (pc:_) -> if f pc

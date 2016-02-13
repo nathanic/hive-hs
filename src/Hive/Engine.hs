@@ -1,11 +1,9 @@
--- {-# LANGUAGE DeriveGeneric #-}
 
-module Engine where
-
--- import GHC.Generics
+module Hive.Engine where
 
 import Control.Category ((>>>))
 import Control.Monad (guard, foldM, when)
+import Control.Exception
 
 import Data.List (find, nub, delete, foldl', maximumBy, sort, inits)
 import qualified Data.List as List
@@ -17,17 +15,19 @@ import Data.Monoid ((<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
 
-import HexGrid (AxialPoint(..))
-import qualified HexGrid as Grid
-import Piece
-import Board
-import Move
+import Hive.HexGrid (AxialPoint(..))
+import qualified Hive.HexGrid as Grid
+import Hive.Piece
+import Hive.Board
+import Hive.Move
 
--- TODO: move test stuff out to test dirs
-import Test.QuickCheck
 import Debug.Trace
 
--- Start with the types!
+-- TODO: move QC stuff out to test dirs and use tasty
+import Test.QuickCheck
+
+data GameState = Playing | Won Team | Draw
+  deriving (Eq, Show)
 
 data Game = Game { gameBoard :: Board
                  , gameUnplaced :: [Piece] -- Set?
@@ -37,11 +37,8 @@ data Game = Game { gameBoard :: Board
                  , gameSpawnablePieces :: [Piece]
                  , gameSpawnPositions :: [AxialPoint]
                  , gameTurn :: Team
-                 , gameWinner :: Maybe Team
-                 } deriving (Eq
-                            , Show
-                            -- , Generic
-                            )
+                 , gameState :: GameState
+                 } deriving (Eq, Show)
 
 -- | determine if two adjacent positions are planar-passable (not gated)
 -- | XXX: only considers the bottommost plane! does not consider movement atop the hive
@@ -68,7 +65,8 @@ antMoves board origin = delete origin reachable -- disallow starting pos
     emptyBorderPositions = nub $ allOccupiedPositions board' >>= unoccupiedNeighbors board'
     -- build an adjacency list (graph) of these empty positions
     -- every empty border cell is a vertex, and has edges to every adjacent empty border cell
-    emptyBorderAdjList = map (\pos -> (pos, pos, unoccupiedNeighbors board' pos)) emptyBorderPositions
+    emptyBorderAdjList = map (\pos -> (pos, pos, planarPassableNeighbors board' pos)) emptyBorderPositions
+
     -- calculate connected components, islands of connectivity
     components = connectedComponents emptyBorderAdjList
     -- we know for a fact that one of the components must have our origin
@@ -157,7 +155,6 @@ movesForPieceAtPosition board origin =
         (topPieceAt board origin)
         board
         origin
-
 
 -- there is probably some hot shit haskelly way to dispatch this
 -- but honestly typing it out wasn't that painful
@@ -277,6 +274,7 @@ applyMove move@(AbsoluteMove piece pos) game
                  , gameSpawnPositions = spawnPositions (opposing turn) board'
                  , gameUnplaced = delete piece unplaced
                  , gameTurn = opposing turn
+                 , gameState = detectGameState game'
                  }
     board' = applyMoveToBoard move board
 
@@ -292,6 +290,19 @@ applyMove move@(AbsoluteMove piece pos) game
 --
 -- maybe use bodil's signal lib?
 
+
+detectGameState :: Game -> GameState
+detectGameState game = 
+    case findSurroundedQueens (gameBoard game) of
+        [_, _] -> Draw
+        [q]    -> Won (pieceTeam q)
+        _      -> Playing
+
+findSurroundedQueens :: Board -> [Piece]
+findSurroundedQueens board = [ queen | (pos,stack) <- findPieces isQueenBee board
+                                     , null (unoccupiedNeighbors board pos)
+                                     , let Just queen = find isQueenBee stack ]
+
 --------------------------------------------------------------------------------
 -- Debug helpers
 
@@ -305,14 +316,12 @@ newGame = Game { gameBoard = emptyBoard
                , gameSpawnPositions = [Axial 0 0]
                , gameSpawnablePieces = filter (not . isQueenBee) $ thisTeamUnplaced newGame
                , gameTurn = White
-               , gameWinner = Nothing
+               , gameState = Playing
                }
 
 
 --------------------------------------------------------------------------------
--- QuickCheck stuff that doesn't really belong here
--- but i'm rusty on qc so i'm just trying it out here for now
--- eventually planning on Tasty, maybe with hspec and qc
+-- most of this is stuff that doesn't really belong here
 
 traceM_ s = trace (s <> "\n") $ return ()
 
@@ -323,36 +332,6 @@ isValidRelativeMove game rel@(RelativeMove mover target dir) = trace ("trying mo
     board = gameBoard game
     absMove = interpretMove board rel
 
-instance Arbitrary Game where
-    arbitrary = do
-        moveCount <- arbitrarySizedNatural
-        doMoves moveCount newGame
-      where
-        doMoves 0 g = return g
-        doMoves n g@Game{gameBoard=board} = do
-            let moves = allPossibleAbsoluteMoves g
-            when (null moves) $ do
-                traceM_ $ "!!! there are no possible moves for game:\n" <> show g
-                discard
-            move <- elements moves
-            case applyMove move g of
-                Left err -> do
-    -- XXX worrisomely, i DO see discarded cases sometimes...
-                    traceM_ $ "failed to apply move " <> show move
-                                <> " to game " <> show g <> "\n"
-                    discard
-                Right g' -> doMoves (n-1) g'
-    -- this is trying to do some structural stuff that requires Arbitrary on
-    -- everything in a Game, which won't work out for my approach of choosing
-    -- among precalculated valid moves
-    -- shrink = genericShrink
-    -- i think to do shrink right, we'd have to just chop off some moves from
-    -- the history and recalculate the games up to that truncation
-    -- tried this but it didn't work out; QC just kept calculating shrinks
-    -- shrink g = safeChop $ decomposeGame g
-
--- safeChop [] = []
--- safeChop (_:xs) = xs
 
 allPossibleAbsoluteMoves :: Game -> [AbsoluteMove]
 allPossibleAbsoluteMoves game = spawnMoves <> boardMoves
@@ -369,25 +348,6 @@ allPossibleAbsoluteMoves game = spawnMoves <> boardMoves
     -- using a flat list of [AbsoluteMove] would eliminate the need for gameSpawnablePieces
     -- would also make representing special pillbug notation easier
 
-prop_piecesConserved g =
-    sort allPieces == sort (allPiecesOnBoard (gameBoard g) <> gameUnplaced g)
-
-prop_freePiecesAlwaysHaveMoves g =
-    let board = gameBoard g
-        freePoses = allFreePiecePositions board
-     in all (not . null) $ map (movesForPieceAtPosition board) freePoses
-
-prop_validMovesLeadToValidBoards Game{gameBoard=board} =
-    board == emptyBoard || isValidBoard board
-
--- TODO: fn to walk through a Game and produce a human-readable transcript
-
--- ooh, it should be possible, givem a Game, to replay it and enforce a Property
--- on the Game at each step
-
-enforceForEntireReplay :: Game -> (Game -> Bool) -> Bool
-enforceForEntireReplay game pred = all pred $ decomposeGame game
-
 decomposeGame :: Game -> [Game]
 decomposeGame origGame =
     map (fromRight . flip applyMovesToGame newGame) $ tail $ inits $ gameMoves origGame
@@ -401,10 +361,6 @@ applyMovesToGame moves game = foldM (flip applyMove) game moves
 
 fromRight (Right x) = x
 fromRight err = error "fromRight (Left x)\n"
-
--- repl testing; grab the largest game from a sample batch
-sampleBigGame :: IO Game
-sampleBigGame = maximumBy (compare `on` length . gameMoves) <$> sample' arbitrary
 
 
 -- need a relative transcript thing now to debug this
@@ -430,3 +386,69 @@ transcript game = [ relativizeMove game (last . gameMoves $ game)
 transcript' :: Game -> [Maybe String]
 transcript' = ((describeMove <$>) <$>) . transcript
 
+
+
+prop_piecesConserved g =
+    sort allPieces == sort (allPiecesOnBoard (gameBoard g) <> gameUnplaced g)
+
+prop_freePiecesAlwaysHaveMoves g =
+    let board = gameBoard g
+        freePoses = allFreePiecePositions board
+     in all (not . null) $ map (movesForPieceAtPosition board) freePoses
+
+prop_validMovesLeadToValidBoards Game{gameBoard=board} =
+    board == emptyBoard || isValidBoard board
+
+-- other ideas (not necessarily quickcheck)
+-- all pieces in a ring are free
+-- there are always free pieces on the board (after initial move)
+-- take scenarios from hive book and enforce found moves
+-- test for upper gated beetle scenario
+-- and impact of that on pillbug
+
+enforceForEntireReplay :: (Game -> Bool) -> Game -> Bool
+enforceForEntireReplay pred game = all pred $ decomposeGame game
+
+instance Arbitrary Game where
+    -- wtf is going on?  it seems like trace from within Arbitrary doesn't work
+    -- and throwing exceptions and calling fail do nothing
+    arbitrary = do
+        -- throw $ AssertionFailed "omg"
+        -- fail "wtf"
+        -- assert False $ return ()
+        moveCount <- arbitrarySizedNatural
+        traceM_ $ "generating an arbitrary game with " <> show moveCount <> " moves."
+        doMoves moveCount newGame
+      where
+        doMoves 0 g = return g
+        doMoves n g@Game{gameBoard=board} = do
+            let moves = allPossibleAbsoluteMoves g
+            if null moves then
+                return $ error $ "there are no possible moves for game:\n" <> show g
+                -- traceM_ $ "!!! there are no possible moves for game:\n" <> show g
+                -- discard
+              else do
+                move <- elements moves
+                case applyMove move g of
+                    Left err -> do
+        -- XXX worrisomely, i DO see discarded cases sometimes...
+                        traceM_ $ "failed to apply move " <> show move
+                                    <> " to game " <> show g <> "\n"
+                        discard
+                    Right g' -> doMoves (n-1) g'
+    -- this is trying to do some structural stuff that requires Arbitrary on
+    -- everything in a Game, which won't work out for my approach of choosing
+    -- among precalculated valid moves
+    -- shrink = genericShrink
+    -- i think to do shrink right, we'd have to just chop off some moves from
+    -- the history and recalculate the games up to that truncation
+    -- tried this but it didn't work out; QC just kept calculating shrinks
+    -- shrink g = safeChop $ decomposeGame g
+
+-- safeChop [] = []
+-- safeChop (_:xs) = xs
+
+
+-- repl testing; grab the largest game from a sample batch
+sampleBigGame :: IO Game
+sampleBigGame = maximumBy (compare `on` length . gameMoves) <$> sample' arbitrary

@@ -14,35 +14,57 @@ cabal-version:       >=1.10
 
 source-repository head
     type: git
-    location: https://github.com/fujimura/hi.git
+    location: https://github.com/nathanic/hive-hs.git
 
 library
-  hs-source-dirs:      src
-  default-language:    Haskell2010
-  build-depends:       base >= 4.7 && < 5
-                     , containers
-                     , parsec
-                     , QuickCheck
+    exposed-modules:
+        Hive.Board
+      , Hive.Engine
+      , Hive.HexGrid
+      , Hive.Move
+      , Hive.Piece
+    build-depends:
+        base ==4.8.*
+      , containers
+      , parsec
+      , QuickCheck
+    default-language: Haskell2010
+    hs-source-dirs: src
+    -- ghc-options: -Wall
 
-executable hive
-  hs-source-dirs:      src
-  main-is:             Main.hs
-  default-language:    Haskell2010
-  build-depends:       base >= 4.7 && < 5
-                     , containers
-                     , parsec
+executable hive-server
+    main-is: Main.hs
+    build-depends:
+        base -any
+      , hive -any
+    default-language: Haskell2010
+    hs-source-dirs: exe
+    ghc-options: -threaded 
+        -- -Wall
 
-test-suite test
-  default-language:
-    Haskell2010
-  type:
-    exitcode-stdio-1.0
-  hs-source-dirs:
-    test src
-  main-is:
-    Test.hs
-  build-depends: base >= 4.7 && < 5
-               , tasty >= 0.11.0.2
-               , tasty-quickcheck
-               , tasty-hspec
-               , QuickCheck
+test-suite hive-test-suite
+    type: exitcode-stdio-1.0
+    main-is: Test.hs
+    build-depends:
+        base -any
+      , hive -any
+      , tasty ==0.11.0.2
+      , tasty-hspec ==1.1.2
+      , tasty-quickcheck
+    default-language: Haskell2010
+    hs-source-dirs: test
+    ghc-options: -threaded 
+        -- -Wall -Werror
+
+-- someday perhaps:
+-- benchmark hive-benchmark
+--     type: exitcode-stdio-1.0
+--     main-is: Benchmark.hs
+--     build-depends:
+--         base -any,
+--         haskeleton-playground -any,
+--         criterion ==1.1.0.0
+--     default-language: Haskell2010
+--     hs-source-dirs: benchmark
+--     ghc-options: -threaded -Wall
+

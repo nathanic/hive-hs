@@ -23,9 +23,6 @@ import Hive.Move
 
 import Debug.Trace
 
--- TODO: move QC stuff out to test dirs and use tasty
-import Test.QuickCheck
-
 data GameState = Playing | Won Team | Draw
   deriving (Eq, Show)
 
@@ -401,69 +398,3 @@ transcript game = [ relativizeMove game (last . gameMoves $ game)
 transcript' :: Game -> [Maybe String]
 transcript' = ((describeMove <$>) <$>) . transcript
 
-
-
-prop_piecesConserved g =
-    sort allPieces == sort (allPiecesOnBoard (gameBoard g) <> gameUnplaced g)
-
-prop_freePiecesAlwaysHaveMoves g =
-    let board = gameBoard g
-        freePoses = allFreePiecePositions board
-     in all (not . null) $ map (movesForPieceAtPosition board) freePoses
-
-prop_validMovesLeadToValidBoards Game{gameBoard=board} =
-    board == emptyBoard || isValidBoard board
-
--- other ideas (not necessarily quickcheck)
--- all pieces in a ring are free
--- there are always free pieces on the board (after initial move)
--- take scenarios from hive book and enforce found moves
--- test for upper gated beetle scenario
--- and impact of that on pillbug
-
-enforceForEntireReplay :: (Game -> Bool) -> Game -> Bool
-enforceForEntireReplay pred game = all pred $ decomposeGame game
-
-instance Arbitrary Game where
-    -- wtf is going on?  it seems like trace from within Arbitrary doesn't work
-    -- and throwing exceptions and calling fail do nothing
-    arbitrary = do
-        -- throw $ AssertionFailed "omg"
-        -- fail "wtf"
-        -- assert False $ return ()
-        moveCount <- arbitrarySizedNatural
-        traceM_ $ "generating an arbitrary game with " <> show moveCount <> " moves."
-        doMoves moveCount newGame
-      where
-        doMoves 0 g = return g
-        doMoves n g@Game{gameBoard=board} = do
-            let moves = allPossibleAbsoluteMoves g
-            if null moves then
-                return $ error $ "there are no possible moves for game:\n" <> show g
-                -- traceM_ $ "!!! there are no possible moves for game:\n" <> show g
-                -- discard
-              else do
-                move <- elements moves
-                case applyMove move g of
-                    Left err -> do
-        -- XXX worrisomely, i DO see discarded cases sometimes...
-                        traceM_ $ "failed to apply move " <> show move
-                                    <> " to game " <> show g <> "\n"
-                        discard
-                    Right g' -> doMoves (n-1) g'
-    -- this is trying to do some structural stuff that requires Arbitrary on
-    -- everything in a Game, which won't work out for my approach of choosing
-    -- among precalculated valid moves
-    -- shrink = genericShrink
-    -- i think to do shrink right, we'd have to just chop off some moves from
-    -- the history and recalculate the games up to that truncation
-    -- tried this but it didn't work out; QC just kept calculating shrinks
-    -- shrink g = safeChop $ decomposeGame g
-
--- safeChop [] = []
--- safeChop (_:xs) = xs
-
-
--- repl testing; grab the largest game from a sample batch
-sampleBigGame :: IO Game
-sampleBigGame = maximumBy (compare `on` length . gameMoves) <$> sample' arbitrary

@@ -22,7 +22,6 @@ import qualified Hive.HexGrid as Grid
 import Hive.Board
 import Hive.Piece
 
-
 -- | the traditional notational representation for Hive moves
 -- TODO: support special pillbug notation
 data RelativeMove = RelativeMove { moverPiece :: Piece

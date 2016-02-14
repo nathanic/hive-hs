@@ -31,20 +31,27 @@ data RelativeMove = RelativeMove { moverPiece :: Piece
                                  }
                     -- first piece placed stands alone
                     | RelativeFirst { moverPiece :: Piece }
+                    -- sometimes there's no valid move, and a player must pass
+                    | RelativePass
   deriving (Eq,Show)
 
 -- | a more convenient machine representation for a move
-data AbsoluteMove = AbsoluteMove { movePiece :: Piece
-                                 , moveCoords :: AxialPoint
-                                 }
-  deriving (Eq,Show)
+data AbsoluteMove = Move { movePiece :: Piece
+                         , moveCoords :: AxialPoint
+                         }
+                    | Pass
+  deriving (Eq)
+
+instance Show AbsoluteMove where
+    show (Move pc pos) = "Move " <> show pc <> " (" <> show pos <> ")"
+    show Pass = "Pass"
 
 -- given a parsed move triple (mover,target,direction)
 -- translate it into a Move using the Board
 interpretMove :: Board -> RelativeMove -> AbsoluteMove
-interpretMove board (RelativeFirst mover) = AbsoluteMove mover (Axial 0 0)
+interpretMove board (RelativeFirst mover) = Move mover (Axial 0 0)
 interpretMove board (RelativeMove mover target dir) =
-    AbsoluteMove mover (head $ findTopPieces (== target) board)
+    Move mover (head $ findTopPieces (== target) board)
     -- XXX should probably do something safer than head here
     -- maybe we return a Maybe or something?
 

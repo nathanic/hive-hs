@@ -171,8 +171,9 @@ movesForSpecies species =
         Spider -> spiderMoves
 
 -- could do [AbsoluteMove] instead but a hashmap is just more convenient for the client
-allMovesForGame :: Game -> Map Piece [AxialPoint]
-allMovesForGame game
+-- (this is just the board-to-board moves, does not include spawns)
+allBoardMovesForGame :: Game -> Map Piece [AxialPoint]
+allBoardMovesForGame game
     | queenIsUnplaced = mempty
     | otherwise       = Map.unionWith (<>) movemap (pillbugProcessing game)
   where
@@ -241,7 +242,8 @@ thisTeamUnplaced game = filter ((== gameTurn game) . pieceTeam) $ gameUnplaced g
 
 -- it would be nice if this gave feedback on exactly why the move is invalid
 isValidMove :: Game -> AbsoluteMove -> Bool
-isValidMove game (AbsoluteMove piece pos) =
+isValidMove game Pass = True -- XXX passing is only valid if you have no possible moves
+isValidMove game (Move piece pos) =
     gameTurn game == pieceTeam piece && (firstMove || boardMove || spawnMove)
   where
     firstMove = null $ gameMoves game
@@ -249,14 +251,16 @@ isValidMove game (AbsoluteMove piece pos) =
     spawnMove = elem piece (gameUnplaced game) && elem pos (gameSpawnPositions game)
 
 applyMoveToBoard :: AbsoluteMove -> Board -> Board
-applyMoveToBoard (AbsoluteMove piece to) board =
+applyMoveToBoard Pass board = board
+applyMoveToBoard (Move piece to) board =
     case findTopPieces (== piece) board of
         [] -> addPiece piece to board
         [from] -> movePieceTo board from to
         _ -> error "broken game! multiple instances of the same piece in the board."
 
 applyMove :: AbsoluteMove -> Game -> Either String Game
-applyMove move@(AbsoluteMove piece pos) game
+applyMove Pass game = Right game
+applyMove move@(Move piece pos) game
     | isValidMove game move = Right game'
     | otherwise             = Left $ "invalid move: " <> show move
                                         <> "\ngame for invalid move: " <> show game
@@ -268,8 +272,13 @@ applyMove move@(AbsoluteMove piece pos) game
          , gameUnplaced = unplaced
          } = game
     game' = game { gameBoard = board'
-                 , gameMoves = history <> [AbsoluteMove piece pos]
-                 , gamePossibleMoves = allMovesForGame game'    -- tied the knot!
+                 , gameMoves = history <> [Move piece pos]
+                 --- XXX BUG TODO it is possible, though rare, for a particular player to have no free pieces (e.g. the other player dominates the outside of the hive)
+                 -- we need a way to represent this situatino properly
+                 -- i imagine the UI will have to show some kind of indication
+                 -- that a player was force to pass, and then just move on to
+                 -- the next turn for the other player.
+                 , gamePossibleMoves = allBoardMovesForGame game'    -- tied the knot!
                  , gameSpawnablePieces = spawnablePieces game'  -- yay circularity
                  , gameSpawnPositions = spawnPositions (opposing turn) board'
                  , gameUnplaced = delete piece unplaced
@@ -292,7 +301,7 @@ applyMove move@(AbsoluteMove piece pos) game
 
 
 detectGameState :: Game -> GameState
-detectGameState game = 
+detectGameState game =
     case findSurroundedQueens (gameBoard game) of
         [_, _] -> Draw
         [q]    -> Won (pieceTeam q)
@@ -312,7 +321,7 @@ findUnplaced board = allPieces List.\\ allPiecesOnBoard board
 newGame = Game { gameBoard = emptyBoard
                , gameUnplaced = allPieces
                , gameMoves = []
-               , gamePossibleMoves = allMovesForGame newGame
+               , gamePossibleMoves = allBoardMovesForGame newGame
                , gameSpawnPositions = [Axial 0 0]
                , gameSpawnablePieces = filter (not . isQueenBee) $ thisTeamUnplaced newGame
                , gameTurn = White
@@ -336,11 +345,11 @@ isValidRelativeMove game rel@(RelativeMove mover target dir) = trace ("trying mo
 allPossibleAbsoluteMoves :: Game -> [AbsoluteMove]
 allPossibleAbsoluteMoves game = spawnMoves <> boardMoves
   where
-    spawnMoves = [AbsoluteMove pc pos
+    spawnMoves = [Move pc pos
                  | pc <- gameSpawnablePieces game
                  , pos <- gameSpawnPositions game
                  ]
-    boardMoves = [AbsoluteMove pc pos
+    boardMoves = [Move pc pos
                  | (pc,poses) <- Map.toList $ gamePossibleMoves game
                  , pos <- poses
                  ]
@@ -348,13 +357,18 @@ allPossibleAbsoluteMoves game = spawnMoves <> boardMoves
     -- using a flat list of [AbsoluteMove] would eliminate the need for gameSpawnablePieces
     -- would also make representing special pillbug notation easier
 
+-- given a Game, return a list of all intermediate gamestates from newGame to this Game
+-- the resulting list is ordered from firs tmove to last, and starts AFTER the first move.
+-- i figured always having newGame be in the list doesn't really convey any information.
+-- passing in an an empty game will produce an empty list.
 decomposeGame :: Game -> [Game]
 decomposeGame origGame =
-    map (fromRight . flip applyMovesToGame newGame) $ tail $ inits $ gameMoves origGame
-    -- foldl' doMove [] (gameMoves origGame)
-    -- where
-    --     doMove []    move = [fromRight $ applyMove move newGame]
-    --     doMove games move = fromRight (applyMove move (last games)) : games
+    -- this def was more fun to write
+    -- map (fromRight . flip applyMovesToGame newGame) $ tail $ inits $ gameMoves origGame
+    -- but this one reduces recomputation and will use sharing
+    tail . reverse $ foldl doMove [newGame] (gameMoves origGame)
+    where
+        doMove games move = fromRight (applyMove move (head games)) : games
 
 applyMovesToGame :: [AbsoluteMove] -> Game -> Either String Game
 applyMovesToGame moves game = foldM (flip applyMove) game moves
@@ -366,7 +380,8 @@ fromRight err = error "fromRight (Left x)\n"
 -- need a relative transcript thing now to debug this
 -- TODO: don't have beetle moves reference the piece it's sitting on top of
 relativizeMove :: Game -> AbsoluteMove -> Maybe RelativeMove
-relativizeMove game (AbsoluteMove piece pos)
+relativizeMove game Pass = Just RelativePass
+relativizeMove game (Move piece pos)
     | 1 == length (gameMoves game) = Just $ RelativeFirst piece
     | otherwise                    = do
         let board = gameBoard game

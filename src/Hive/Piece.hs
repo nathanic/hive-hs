@@ -16,6 +16,7 @@ newtype Piece = Piece {pieceName :: String}
 instance Show Piece where
   show = pieceName
 
+pieceTeam :: Piece -> Team
 pieceTeam (Piece (t:_)) =
     case t of
         'b' -> Black

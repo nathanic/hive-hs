@@ -209,20 +209,14 @@ spawnPositions team board =
                                 [] -> error $ "findTopPieces (const True) found nothing on black turn! board: " <> show board
                                 (pos:_) -> Grid.neighbors pos
         -- spawns are empty hexes that are both bordering friendlies and not bordering foes
-        (_, friendlies) -> [ emptyNabe
-                           | emptyNabe <- nub $ friendlies >>= unoccupiedNeighbors board
-                           , not . any ((== opposing team)
-                                            . pieceTeam
-                                            . unsafeTopPieceAt board)
-                                 $ occupiedNeighbors board emptyNabe
-                           ]
+        (_, friendlies) -> [ emptyNabe | emptyNabe <- nub $ friendlies >>= unoccupiedNeighbors board
+                                       , not $ hexTouchesTeam board (opposing team) emptyNabe
+                                       ]
 
 hexTouchesTeam :: Board -> Team -> AxialPoint -> Bool
 hexTouchesTeam board team pos =
     any ((== team) . pieceTeam . unsafeTopPieceAt board)
         $ occupiedNeighbors board pos
-
-
 
 spawnablePieces :: Game -> [Piece]
 spawnablePieces game
@@ -399,4 +393,10 @@ transcript game = [ relativizeMove game (last . gameMoves $ game)
 
 transcript' :: Game -> [Maybe String]
 transcript' = ((describeMove <$>) <$>) . transcript
+
+gameFromTranscript :: [String] -> Either String Game
+gameFromTranscript moves = foldM doMove newGame relmoves
+  where
+    Right relmoves = mapM parseMove moves
+    doMove game relmove = applyMove (interpretMove (gameBoard game) relmove) game 
 

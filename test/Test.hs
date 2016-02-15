@@ -4,7 +4,9 @@ import Test.Tasty.QuickCheck
 
 import Data.List (find, sort, maximumBy, (\\))
 import Data.Function (on)
-import Data.Maybe (isNothing)
+import Data.Map (Map)
+import qualified Data.Map as Map
+import Data.Maybe (isNothing, fromJust)
 import Data.Monoid ((<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -80,7 +82,7 @@ isStuckWhenSurrounded pc = null $ movesForPieceAtPosition board gatedHex
 pieceMovementSpec :: Spec
 pieceMovementSpec = parallel $ do
     describe "Ant" $ do
-        it "moves all around the outside of the hive but not into gates" $ 
+        it "moves all around the outside of the hive but not into gates" $
             antMoves boardWithGate (Axial 0 0)
                 `shouldMatchList` [ Axial 1 (-1) -- \wS1
                                   , Axial 2 (-1) -- wS1/
@@ -152,18 +154,42 @@ pieceMovementSpec = parallel $ do
             let board = addPiece wM (Axial 1 0) boardWithGate
             mosquitoMoves board (Axial 1 0) `shouldMatchList` Grid.neighbors (Axial 1 0)
     describe "Pillbug" $ do
+        let Right game = gameFromTranscript [ "wS1"
+                                            , "bS1 wS1\\"
+                                            , "wQ \\wS1"
+                                            , "bQ bS1\\"
+                                            , "wP -wS1"
+                                            , "bG1 bS1-"
+                                            , "wA1 -wQ"
+                                            , "bA1 bQ-"
+                                            , "wS2 /wP"
+                                            , "bA1 wA1/"
+                                            , "wB1 -wS2"
+                                            , "bB1 \\bA1"
+                                            , "wB1 /wP"
+                                            , "bB1 \\wA1"
+                                            , "wG1 wQ-"
+                                            , "bB1 -wQ"
+                                            ]
+            board = gameBoard game
+            movesByPiece = allBoardMovesForGame game
         -- full pillbug processing requires a Game, not merely a Board
         -- we're going to have to build a desired game state from a set of actual legal moves
-        it "can move enemy pieces"
-            pending
-        it "can't move pieces past an upper level gate"
-            pending
+        it "can't move pieces past an upper level gate" $
+            Map.lookup wQ movesByPiece `shouldBe` Just [Axial (-1) 1]
         it "can't move a piece that moved last turn"
+            pending
+        it "can't move a piece that is under another piece"
             pending
         it "moves like a queen"
             pending
-        it "can only move pieces at ground level"
+        it "can move enemy pieces around"
+            -- let pBNE = Axial 0 (-1)         -- swap out wQ for bS2
+                -- board' = addPiece bS2 pBNE $ removeTopPieceAt pBNE board
+            -- Map.lookup wQ movesByPiece `shouldBe` Just [Axial (-1) 1]
             pending
+        it "can only move pieces that are at ground level" $
+            fromJust (Map.lookup bB1 movesByPiece) `shouldNotContain` [Axial (-1) 1]
         it "is stuck if surrounded" $
             bP `shouldSatisfy` isStuckWhenSurrounded
         it "is stuck if gated in" $
@@ -171,8 +197,8 @@ pieceMovementSpec = parallel $ do
             bP `shouldSatisfy` isStuckWhenGatedIn
     describe "QueenBee" $ do
         it "remains in constant contact with the hive" $
-            -- notably, the results do NOT include (2,0) which is on hex away but impassible
-            queenBeeMoves boardConstantContact (Axial 2 1) 
+            -- notably, the results do NOT include (2,0) which is one hex away but unreachable
+            queenBeeMoves boardConstantContact (Axial 2 1)
                 `shouldMatchList` [Axial 1 1, Axial 3 1]
         it "is stuck if surrounded" $
             bQ `shouldSatisfy` isStuckWhenSurrounded

@@ -48,9 +48,10 @@ instance Show AbsoluteMove where
 -- given a parsed move triple (mover,target,direction)
 -- translate it into a Move using the Board
 interpretMove :: Board -> RelativeMove -> AbsoluteMove
-interpretMove board (RelativeFirst mover) = Move mover (Axial 0 0)
+interpretMove _     RelativePass                    = Pass
+interpretMove board (RelativeFirst mover)           = Move mover (Axial 0 0)
 interpretMove board (RelativeMove mover target dir) =
-    Move mover (head $ findTopPieces (== target) board)
+    Move mover $ Grid.neighbor dir (head $ findTopPieces (== target) board)
     -- XXX should probably do something safer than head here
     -- maybe we return a Maybe or something?
 

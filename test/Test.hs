@@ -6,6 +6,8 @@ import Data.List (find, sort, maximumBy, (\\))
 import Data.Function (on)
 import Data.Maybe (isNothing)
 import Data.Monoid ((<>))
+import Data.Set (Set)
+import qualified Data.Set as Set
 
 import Hive.Board
 import Hive.Engine
@@ -13,12 +15,14 @@ import Hive.HexGrid (AxialPoint(..))
 import qualified Hive.HexGrid as Grid
 import Hive.Piece
 
+-- handy commands to remember:
+-- $ stack test --file-watch
+-- $ stack repl :hive-test-suite
+
 main :: IO ()
 main = do
     behaviors <- testSpec "Piece Movement Behaviors" pieceMovementSpec
     Tasty.defaultMain $ Tasty.testGroup "All Tests" [behaviors, qcProperties]
-
-makeBoard = foldl (\b (p, q, pc) -> addPiece pc (Axial p q) b) emptyBoard
 
 -- figure 1.6 from PHLAC (Play Hive Like A Champion by Randy Ingersoll)
 -- demonstrating a simple gate barring direct access to position "A" at (1,1)
@@ -44,7 +48,23 @@ boardConstantContact = makeBoard [(0,0,wA1)
                                  ,(2,1,bQ)
                                  ]
 boardWithDoor = undefined
-boardWithUpperGate = undefined
+
+-- figure 2.18 from PHLAC
+-- upper gate blocks wP from moving wQ to (-1,2)
+boardWithUpperGate = makeBoard [ (0,0,bA2)
+                               , (0,1,wA1)
+                               , (0,1,bB1)
+                               , (1,1,bQ)
+                               , (4,1,bA1)
+                               , (1,2,wP)
+                               , (2,2,wG1)
+                               , (3,2,bS1)
+                               , (4,2,bG1)
+                               , (-1,3,wS1)
+                               , (-1,3,wB1)
+                               , (2,3,bQ)
+                               ]
+
 
 -- place the piece at the center of boardWithGate and see if it can get out
 isStuckWhenGatedIn :: Piece -> Bool
@@ -56,11 +76,26 @@ isStuckWhenSurrounded :: Piece -> Bool
 isStuckWhenSurrounded pc = null $ movesForPieceAtPosition board gatedHex
   where board = addPiece pc gatedHex $ addPiece bB1 (Axial 2 0) boardWithGate
 
+
 pieceMovementSpec :: Spec
 pieceMovementSpec = parallel $ do
     describe "Ant" $ do
-        it "moves all around the outside of the hive"
-            pending
+        it "moves all around the outside of the hive but not into gates" $ 
+            antMoves boardWithGate (Axial 0 0)
+                `shouldMatchList` [ Axial 1 (-1) -- \wS1
+                                  , Axial 2 (-1) -- wS1/
+                                  , Axial 2 0    -- wS1-
+                                  , Axial 3 0    -- bA1/
+                                  , Axial 3 1    -- bA1-
+                                  , Axial 3 2    -- bQ-
+                                  , Axial 2 3    -- bQ\
+                                  , Axial 1 3    -- /bQ
+                                  , Axial 0 3    -- /bG1
+                                  , Axial (-1) 3 -- /wG1
+                                  , Axial (-1) 2 -- -wG1
+                                  , Axial (-1) 1 -- -wQ
+                                  ]
+
         it "passes through doors"
             pending
         it "cannot move inside enclosed cavities"
@@ -69,70 +104,82 @@ pieceMovementSpec = parallel $ do
             bA3 `shouldSatisfy` isStuckWhenSurrounded
         it "is stuck if gated in" $
             bA3 `shouldSatisfy` isStuckWhenGatedIn
-        it "cannot pass through gates" $
-            antMoves boardWithGate (Axial 0 0) `shouldSatisfy` not . elem gatedHex
     describe "Beetle" $ do
-        it "can move atop the hive"
-            pending
+        it "can move atop the hive" $ do
+            -- surround the beetle on all sides
+            let board = addPieces [(2,0,wA2), (1,1,bB2)] boardWithGate
+            beetleMoves board gatedHex `shouldMatchList` Grid.neighbors gatedHex
         it "cannot pass through higher level gates"
             pending
-        it "cannot pass through regular gates either"
-            pending
+        it "cannot slide through regular gates either" $ do
+            let board = addPieces [(2,0,bB2)] boardWithGate
+            beetleMoves board (Axial 2 0)
+                `shouldMatchList` [ Axial 1 0    -- atop wS1
+                                  , Axial 2 (-1) -- wS1/
+                                  , Axial 2 1    -- atop bA1
+                                  , Axial 3 0    -- bA1/
+                                  ]
+        it "can drop down into gated areas from above" $ do
+            -- stick a beetle on top of the spider, it should be able to reach into gatedHex
+            let board = addPiece bB2 (Axial 1 0) boardWithGate
+            beetleMoves board (Axial 1 0) `shouldMatchList` Grid.neighbors (Axial 1 0) -- neighbors include gatedHex
         it "is NOT stuck if surrounded" $
             bB2 `shouldSatisfy` isStuckWhenSurrounded
         it "is NOT stuck if gated in" $
-            wB2 `shouldSatisfy` not . isStuckWhenGatedIn
+            wB2 `shouldNotSatisfy` isStuckWhenGatedIn
     describe "Grasshopper" $ do
         it "moves in straight lines only"
             pending
         it "is NOT stuck if surrounded" $
-            bG3 `shouldSatisfy` not . isStuckWhenSurrounded
+            bG3 `shouldNotSatisfy` isStuckWhenSurrounded
         it "is NOT stuck if gated in" $
-            bG3 `shouldSatisfy` not . isStuckWhenGatedIn
+            bG3 `shouldNotSatisfy` isStuckWhenGatedIn
     describe "Ladybug" $ do
         it "goes 2 hexes on top and then must drop down"
             pending
         it "is NOT stuck if surrounded" $
-            bL `shouldSatisfy` not . isStuckWhenSurrounded
+            bL `shouldNotSatisfy` isStuckWhenSurrounded
         it "is NOT stuck if gated in" $
-            wL `shouldSatisfy` not . isStuckWhenGatedIn
+            wL `shouldNotSatisfy` isStuckWhenGatedIn
     describe "Mosquito" $ do
         it "can jump like a grasshopper or move like a ladybug"
             pending
         -- it "can dance like a butterfly or sting like a bee" pending
         it "has no moves when its only neighbor is another mosquito" $ do
-            let board = addPiece wM (Axial 2 2)
-                        $ addPiece bM (Axial 3 2)
-                            boardWithGate
+            let board = addPieces [(2,2,wM), (3,2,bM)] boardWithGate
             mosquitoMoves board (Axial 3 2) `shouldBe` []
         it "must remain in beetle mode if it starts the turn atop the hive" $ do
             let board = addPiece wM (Axial 1 0) boardWithGate
-            -- would this be a better or worse test if it was just a literal
-            -- list of axial coords instead of calling beetleMoves?
-            mosquitoMoves board (Axial 1 0) `shouldBe` beetleMoves board (Axial 1 0)
+            mosquitoMoves board (Axial 1 0) `shouldMatchList` Grid.neighbors (Axial 1 0)
     describe "Pillbug" $ do
+        -- full pillbug processing requires a Game, not merely a Board
+        -- we're going to have to build a desired game state from a set of actual legal moves
         it "can move enemy pieces"
             pending
         it "can't move pieces past an upper level gate"
             pending
+        it "can't move a piece that moved last turn"
+            pending
         it "moves like a queen"
+            pending
+        it "can only move pieces at ground level"
             pending
         it "is stuck if surrounded" $
             bP `shouldSatisfy` isStuckWhenSurrounded
         it "is stuck if gated in" $
-            --- XXX beware, this is just using pillbugMoves, and not pillbugProcessing
+            --- beware, this is just using pillbugMoves, and not pillbugProcessing
             bP `shouldSatisfy` isStuckWhenGatedIn
     describe "QueenBee" $ do
         it "remains in constant contact with the hive" $
             -- notably, the results do NOT include (2,0) which is on hex away but impassible
-            queenBeeMoves boardConstantContact (Axial 2 1) \\ [Axial 1 1, Axial 3 1]
-                `shouldBe` []
+            queenBeeMoves boardConstantContact (Axial 2 1) 
+                `shouldMatchList` [Axial 1 1, Axial 3 1]
         it "is stuck if surrounded" $
             bQ `shouldSatisfy` isStuckWhenSurrounded
         it "is stuck if gated in" $
             -- XXX technically this makes an unsound board since there is already a bQ placed
             -- but due to how the move calculations are implemented it *shouldn't* matter...
-            bQ `shouldSatisfy` not . isStuckWhenGatedIn
+            bQ `shouldSatisfy` isStuckWhenGatedIn
     describe "Spider" $ do
         it "normally has only 2 moves"
             pending
@@ -141,11 +188,11 @@ pieceMovementSpec = parallel $ do
         it "cannot pass through gates" $ do
             -- bS1 bA1-
             let board = addPiece bS1 (Axial 2 2) boardWithGate
-            spiderMoves board (Axial 2 2) `shouldSatisfy` not . elem gatedHex
+            spiderMoves board (Axial 2 2) `shouldNotContain` [gatedHex]
         it "is stuck if surrounded" $
             wS2 `shouldSatisfy` isStuckWhenSurrounded
         it "is stuck if gated in" $
-            wS2 `shouldSatisfy` not . isStuckWhenGatedIn
+            wS2 `shouldSatisfy` isStuckWhenGatedIn
 
 -- other things to check:
     -- all pieces in a ring are free?
@@ -191,6 +238,9 @@ instance Arbitrary Game where
         doMoves n g@Game{gameBoard=board} = do
             let moves = allPossibleAbsoluteMoves g
             if null moves then
+            -- okay, so this one can definitely happen and should not really be an error
+            -- it means all the free pieces are controlled by the opposing team, so
+            -- this player must pass
                 return $ error $ "there are no possible moves for game:\n" <> show g
                 -- traceM_ $ "!!! there are no possible moves for game:\n" <> show g
                 -- discard
@@ -222,3 +272,10 @@ sampleBigGame = maximumBy (compare `on` length . gameMoves) <$> sample' arbitrar
 
 
 
+-- some helpers for building test Boards
+
+addPieces :: [(Int,Int,Piece)] -> Board -> Board
+addPieces = flip $ foldl (\b (p, q, pc) -> addPiece pc (Axial p q) b)
+
+makeBoard :: [(Int,Int,Piece)] -> Board
+makeBoard spec = addPieces spec emptyBoard

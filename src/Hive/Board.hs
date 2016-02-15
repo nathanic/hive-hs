@@ -95,7 +95,9 @@ findTopPieces f board = Map.foldlWithKey
 
 findTopPiecesBySpecies spec = findTopPieces (\pc -> spec == pieceSpecies pc)
 
--- | a.k.a. is this piece an articulation point in the board graph?
+-- | N.B. this is really a check that the given piece is not an articulation point
+-- in the board graph; a "free" position found by this fn could still be
+-- prevented from moving by being surrounded etc.
 pieceIsFree :: Board -> AxialPoint -> Bool
 pieceIsFree board pos = isOneHive (board `removeTopPieceAt` pos)
 
@@ -124,8 +126,18 @@ isOneHive b =
         _   -> False -- empty or multiple disconnected islands of pieces -> bad board
 
 isValidBoard :: Board -> Bool
-isValidBoard b = isOneHive b && length allPieces == length (nub allPieces)
-  where allPieces = allPiecesOnBoard b
+isValidBoard b =
+    isOneHive b
+    && length allPieces == length (nub allPieces)
+    && stackedPiecesAreStackable
+  where
+    allPieces = allPiecesOnBoard b
+    isStackable pc = let species = pieceSpecies pc
+                      in species == Beetle || species == Mosquito
+    stackedPiecesAreStackable = all (all isStackable . init) $
+                                    map (piecesAt b) $
+                                    filter (isStacked b) $
+                                        allOccupiedPositions b
 
 connectedComponents :: Ord key => [(node,key,[key])] -> [[node]]
 connectedComponents adjlist = deforest $ Graph.components g

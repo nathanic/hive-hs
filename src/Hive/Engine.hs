@@ -50,6 +50,11 @@ isPlanarPassable board from to =
     board' = board `removeTopPieceAt` from
     (gate1,gate2) = Grid.gatePositions from to
 
+-- if a piece is atop the hive
+isUpperPlanarPasssable :: Board -> AxialPoint -> AxialPoint -> Bool
+isUpperPlanarPasssable board from to = undefined
+
+
 planarPassableNeighbors :: Board -> AxialPoint -> [AxialPoint]
 planarPassableNeighbors board pos = filter (isPlanarPassable board pos) $ Grid.neighbors pos
 
@@ -70,10 +75,15 @@ antMoves board origin = delete origin reachable -- disallow starting pos
     -- containing the coordinates of all hexes reachable therefrom
     Just reachable = find (elem origin) components
 
+
+-- BUG: does not consider upper level gates
+-- BUG: does not allow dropping into a gated position from above
 beetleMoves :: Board -> AxialPoint -> [AxialPoint]
 beetleMoves board origin = filter kosher $ Grid.neighbors origin
   where
-    kosher nabe = board' `isOccupiedAt` nabe || isPlanarPassable board' origin nabe
+    kosher nabe
+        | isStacked board' origin = True -- isUpperPlanarPasssable board origin nabe
+        | otherwise               = board' `isOccupiedAt` nabe || isPlanarPassable board' origin nabe
     board' = removeTopPieceAt board origin
 
 grasshopperMoves :: Board -> AxialPoint -> [AxialPoint]
@@ -199,21 +209,13 @@ spawnPositions team board =
                                 [] -> error $ "findTopPieces (const True) found nothing on black turn! board: " <> show board
                                 (pos:_) -> Grid.neighbors pos
         -- spawns are empty hexes that are both bordering friendlies and not bordering foes
-        (_, friendlies) ->
-                           -- [ emptyNabe
-                           -- | friendly <- friendlies
-                           -- , emptyNabe <- unoccupiedNeighbors board friendly
-                           -- , not $ any ((== opposing team) . pieceTeam . unsafeTopPieceAt board)
-                           --       $ occupiedNeighbors board emptyNabe
-                           -- ]
-                           let friendlyEmpties  = Set.fromList $
-                                                    findTopPieces ((== team). pieceTeam) board
-                                                        >>= unoccupiedNeighbors board
-                               foeEmpties       = Set.fromList $
-                                                    findTopPieces ((== opposing team). pieceTeam) board
-                                                        >>= unoccupiedNeighbors board
-
-                            in Set.toList $ Set.difference friendlyEmpties foeEmpties
+        (_, friendlies) -> [ emptyNabe
+                           | emptyNabe <- nub $ friendlies >>= unoccupiedNeighbors board
+                           , not . any ((== opposing team)
+                                            . pieceTeam
+                                            . unsafeTopPieceAt board)
+                                 $ occupiedNeighbors board emptyNabe
+                           ]
 
 hexTouchesTeam :: Board -> Team -> AxialPoint -> Bool
 hexTouchesTeam board team pos =

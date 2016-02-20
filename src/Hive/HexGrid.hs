@@ -26,9 +26,6 @@ data Direction = NE | E | SE | SW | W | NW
 data Rotation = CW | CCW
   deriving (Show, Eq)
 
-data PixelPoint = Pixel Double Double
-  deriving (Show, Eq)
-
 -- TODO: distinguish vectors from points?
 -- axial points are always integer coordinates on the centers of hexes
 data AxialPoint = Axial Int Int

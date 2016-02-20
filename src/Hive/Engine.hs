@@ -1,11 +1,12 @@
 
 module Hive.Engine where
 
+import Control.Arrow ((&&&))
 import Control.Category ((>>>))
 import Control.Monad (guard, foldM, when)
 import Control.Exception
 
-import Data.List (find, nub, delete, foldl', maximumBy, sort, inits)
+import Data.List (find, nub, nubBy, delete, foldl', maximumBy, sort, inits)
 import qualified Data.List as List
 import Data.Function (on)
 import Data.Map.Strict (Map)
@@ -37,8 +38,9 @@ data Game = Game { gameBoard :: Board
                  , gameState :: GameState
                  } deriving (Eq, Show)
 
--- | determine if two adjacent positions are planar-passable (not gated)
--- | XXX: only considers the bottommost plane! does not consider movement atop the hive
+-- | Determine if two adjacent positions are planar-passable (not gated, and not off the hive).
+-- NB: This only considers the bottommost plane! does not consider movement atop the hive.
+-- for that, see isUpperPassable.
 isPlanarPassable :: Board -> AxialPoint -> AxialPoint -> Bool
 isPlanarPassable board from to =
     not (board `isOccupiedAt` to)
@@ -50,14 +52,34 @@ isPlanarPassable board from to =
     board' = board `removeTopPieceAt` from
     (gate1,gate2) = Grid.gatePositions from to
 
--- if a piece is atop the hive
-isUpperPlanarPasssable :: Board -> AxialPoint -> AxialPoint -> Bool
-isUpperPlanarPasssable board from to = undefined
+-- | If a piece is atop the hive, is it free to move from `from` to `to` given its z-level?
+isUpperPasssable :: Board -> AxialPoint -> AxialPoint -> Bool
+isUpperPasssable board from to = error "TODO: this. upper passability"
 
+-- it'd be nice to have a grand unified passability model
 
 planarPassableNeighbors :: Board -> AxialPoint -> [AxialPoint]
 planarPassableNeighbors board pos = filter (isPlanarPassable board pos) $ Grid.neighbors pos
 
+upperPassableNeighbors :: Board -> AxialPoint -> [AxialPoint]
+upperPassableNeighbors board pos = filter (isPlanarPassable board pos) $ Grid.neighbors pos
+
+--------------------------------------------------------------------------------
+-- | Per-Species Movement Rules
+--------------------------------------------------------------------------------
+-- Laws for Move Functions:
+--    - never allow the origin point, because that's not really a move.
+--    - never examine your own Piece, so that the Mosquito can emulate you.
+-- Common Patterns:
+--    - consider the board with the moving piece removed, as this is usually
+--    the right board graph to consider, since the moving piece won't be at the
+--    origin anymore. duh.
+--    - many can just get away with planarPassableNeighbors or monadic
+--    compositions thereof, possibly with some filtering.
+--    - a few have to construct graphs (from adjlists) and query connected components.
+
+-- | Ants can make as many planar-passable moves as they please around the
+-- hive. The origin point is disallowed, since that's not really a move.
 antMoves :: Board -> AxialPoint -> [AxialPoint]
 antMoves board origin = delete origin reachable -- disallow starting pos
   where
@@ -82,10 +104,13 @@ beetleMoves :: Board -> AxialPoint -> [AxialPoint]
 beetleMoves board origin = filter kosher $ Grid.neighbors origin
   where
     kosher nabe
-        | isStacked board' origin = True -- isUpperPlanarPasssable board origin nabe
+        | isStacked board' origin = True -- isUpperPasssable board origin nabe
         | otherwise               = board' `isOccupiedAt` nabe || isPlanarPassable board' origin nabe
     board' = removeTopPieceAt board origin
 
+-- | Grasshoppers leapfrog in straight directions over arbitrarily many bugs,
+-- stopping at the first free hex they encounter. Hopping ignores normal
+-- passability rules.
 grasshopperMoves :: Board -> AxialPoint -> [AxialPoint]
 grasshopperMoves board origin = do
     dir <- Grid.allDirections
@@ -215,8 +240,12 @@ spawnPositions team board =
 
 hexTouchesTeam :: Board -> Team -> AxialPoint -> Bool
 hexTouchesTeam board team pos =
-    any ((== team) . pieceTeam . unsafeTopPieceAt board)
-        $ occupiedNeighbors board pos
+    any ((== team) . pieceTeam . unsafeTopPieceAt board) $
+        occupiedNeighbors board pos
+
+-- | removeDupePieces [wQ, wA1, wA2, wA3] == [wQ, wA1]
+removeDupePieces :: [Piece] -> [Piece]
+removeDupePieces = nubBy ((==) `on` pieceTeam &&& pieceSpecies)
 
 spawnablePieces :: Game -> [Piece]
 spawnablePieces game
@@ -225,7 +254,7 @@ spawnablePieces game
     | otherwise                      = unplacedFriendlies
   where
     turnNo = length (gameMoves game) `div` 2 + 1 -- this player's 1-based turn #
-    unplacedFriendlies = thisTeamUnplaced game
+    unplacedFriendlies = removeDupePieces $ thisTeamUnplaced game
     queenIsUnplaced = isJust $ find isQueenBee unplacedFriendlies
     isFriendly = (== gameTurn game) . pieceTeam
 
@@ -367,36 +396,58 @@ applyMovesToGame :: [AbsoluteMove] -> Game -> Either String Game
 applyMovesToGame moves game = foldM (flip applyMove) game moves
 
 fromRight (Right x) = x
-fromRight err = error "fromRight (Left x)\n"
+fromRight err = error "fromRight (Left _)\n"
 
-
--- need a relative transcript thing now to debug this
--- TODO: don't have beetle moves reference the piece it's sitting on top of
+-- | Convert an AbsoluteMove into a RelativeMove
+-- given a Game where that move can be played in the next turn.
 relativizeMove :: Game -> AbsoluteMove -> Maybe RelativeMove
 relativizeMove game Pass = Just RelativePass
-relativizeMove game (Move piece pos)
-    | 1 == length (gameMoves game) = Just $ RelativeFirst piece
-    | otherwise                    = do
-        let board = gameBoard game
+relativizeMove game move@(Move piece pos)
+    | null (gameMoves game) = Just $ RelativeFirst piece
+    | otherwise             = do
         -- traceM_ $ "[rM] pos: " <> show pos
-        target <- listToMaybe $ occupiedNeighbors board pos
+        guard $ move `elem` allPossibleAbsoluteMoves game
+        let board = gameBoard game
+        -- we can't  allow a beetle move to reference the piece underneath it
+        -- when moving off of that piece
+        let rmOrigin :: [AxialPoint] -> Maybe AxialPoint
+            rmOrigin = case findTopPieces (== piece) board of
+                            [origin] -> find (/= origin)
+                            []       -> (trace $ "spawn move: " <> show move <> "\n")
+                                        listToMaybe -- this must be a spawn move
+                            origins  -> error $ "found multiple origins for Piece"
+                                                <> show piece <> ": "
+                                                <> show origins <> "\n"
+        -- traceM_ $ "[rM] origin: " <> show origin
+        -- let origin = Axial 999 999 -- TEMP for testing
+        target <- rmOrigin $ occupiedNeighbors board pos
         -- traceM_ $ "[rM] target: " <> show target
         targetPiece <- topPieceAt board target
         -- traceM_ $ "[rM] targetPiece: " <> show targetPiece
         dir <- Grid.findDirectionFromAxialPoints target pos
         -- traceM_ $ "[rM] dir: " <> show dir
-        return $ RelativeMove piece targetPiece dir
+        pure $ RelativeMove piece targetPiece dir
 
 transcript :: Game -> [Maybe RelativeMove]
-transcript game = [ relativizeMove game (last . gameMoves $ game)
-                    | game <- decomposeGame game ]
+transcript Game{gameMoves=[]}        = []
+transcript Game{gameMoves=[m]}       = [relativizeMove newGame m]
+transcript game                      =
+    [ (trace $ "\ng = " <> show (gameMoves g) <> "\n" <> " nextMove = " <> show nextMove <> "\n")
+      relativizeMove g nextMove | (g, g') <- zip games (tail games)
+                                , let nextMove = last . gameMoves $ g' ]
+  where
+    games = newGame : decomposeGame game
+
 
 transcript' :: Game -> [Maybe String]
 transcript' = ((describeMove <$>) <$>) . transcript
 
 gameFromTranscript :: [String] -> Either String Game
-gameFromTranscript moves = foldM doMove newGame relmoves
+gameFromTranscript moves = applyTranscript moves newGame
+
+applyTranscript :: [String] -> Game -> Either String Game
+applyTranscript moves game = foldM doMove game relmoves
   where
     Right relmoves = mapM parseMove moves
-    doMove game relmove = applyMove (interpretMove (gameBoard game) relmove) game 
+    doMove g relmove = applyMove (interpretMove (gameBoard g) relmove) g
 

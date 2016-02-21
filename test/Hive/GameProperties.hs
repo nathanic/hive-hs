@@ -4,19 +4,30 @@ module Hive.GameProperties
 
 import qualified Test.Tasty as Tasty
 import Test.Tasty.QuickCheck
+import Test.QuickCheck
 
-import Data.List (find, sort, maximumBy, (\\))
+import Control.Concurrent (forkIO, forkOS)
+import Control.Concurrent.MVar
+import Control.Exception (evaluate)
+import Control.Monad (forM, forM_, replicateM)
+
+import Data.List (find, sort, maximumBy, minimumBy, (\\))
 import Data.Function (on)
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe (isNothing, fromJust)
+import Data.Maybe (isNothing, fromJust, fromMaybe)
 import Data.Monoid ((<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
 
+import Text.ParserCombinators.Parsec
+import Text.Parsec.Error (Message(..),newErrorMessage)
+import Text.Parsec.Pos (initialPos)
+
 import Debug.Trace (trace)
 
 import Hive.Board
+import Hive.HexGrid (AxialPoint(..))
 import qualified Hive.HexGrid as Grid
 import Hive.Engine
 import Hive.Move
@@ -44,20 +55,17 @@ gameProperties = Tasty.testGroup "QuickCheck properties"
     ]
 
 
-prop_movesDoNotSelfReference game@Game{..} = all isLegitMove $ transcript game
+prop_movesDoNotSelfReference origGame = all isLegitMove (decomposeGameWithTranscript origGame)
   where
-    isLegitMove Nothing = error "failed to transcribe move from Arbitrary Game"
-    isLegitMove (Just (RelativeMove mover target _)) =
-        -- don't let the target be any of the pieces at the mover's position
-        -- if this is a spawn move, findPieces will give an empty list, and
-        -- we'll default to (and []) == True
-        and [ if target /= pc
-                then True
-                else trace ("target " <> show target <> " is in origin stack of mover " <> show mover <> "\n") False
-                | (pos, stack) <- findPieces (== mover) gameBoard
-                           , pc <- stack ]
-    isLegitMove _ = True -- whatevs
+    isLegitMove (_,Nothing)                                      =
+        error "failed to transcribe move from Arbitrary Game"
+    isLegitMove (Game{..}, Just (RelativeMove mover target dir)) =
+        mover /= target
+    isLegitMove _                                                =
+        True -- whatevs
 
+-- maybe another one that checks that we do not reference within our own stack
+-- if we have any other choice...
 
 -- other ideas (not necessarily quickcheck)
 -- all pieces in a ring are free
@@ -105,46 +113,137 @@ instance Arbitrary Game where
                 in safeTail . safeButLast $ games
 
 
--- it'd be nice to see a game transcript in the QC output
-data Transcribed = Transcribed Game (Maybe String)
+--------------------------------------------------------------------------------
+-- | Automatic Transcription Support for Game Counterexamples
+--------------------------------------------------------------------------------
+
+data Transcribed = Transcribed Game String
     deriving (Eq)
 
 instance Show Transcribed where
-  show (Transcribed g Nothing) = "Transcribed " <> show g <> " Nothing"
-  show (Transcribed g (Just ts)) = "Transcribed " <> show g <> "\n" <> ts
+  show (Transcribed g ts) = "Transcribed " <> show g <> "\n" <> ts
 
+-- | Wrap a Game with a human-readable transcript
+transcribedGame :: Game -> Transcribed
 transcribedGame g = Transcribed g (niceTranscript g)
-  where
-    niceTranscript = (unlines <$>) . sequence . transcript'
 
+niceTranscript = unlines . map (fromMaybe "Nothing") . transcript'
+
+-- | Wrap a Game predicate to support automatic transcription
 adaptPropForTranscription :: (Game -> Bool) -> (Transcribed -> Bool)
 adaptPropForTranscription p = \(Transcribed g _) -> p g
 
 instance Arbitrary Transcribed where
-    arbitrary = do
-        g <- arbitrary
-        pure $ transcribedGame g
-    shrink (Transcribed g _) = map transcribedGame $ shrink g
+    arbitrary = transcribedGame <$> arbitrary
+    shrink (Transcribed g _) = transcribedGame <$> shrink g
 
 
 -- repl testing; grab the largest game from a sample batch
 sampleBigGame :: IO Game
 sampleBigGame = maximumBy (compare `on` length . gameMoves) <$> sample' arbitrary
 
+-- repl testing a counterexample Game
+-- jank = fromRight . gameFromTranscript $
+--     [ "wM"
+--     , "bM -wM"
+--     , "wG1 wM\\"
+--     , "bQ -bM"
+--     , "wB1 wG1-"
+--     , "bL /bQ"
+--     , "wQ wB1-"
+--     , "bS1 -bQ"
+--     , "wA1 /wB1"
+--     , "bB1 \bS1"
+--     , "wB2 /wG1"
+--     , "bB1 -bQ"
+--     ]
 
--- repl testing
-jank = fromRight . gameFromTranscript $
-    [ "wM"
-    , "bM -wM"
-    , "wG1 wM\\"
-    , "bQ -bM"
-    , "wB1 wG1-"
-    , "bL /bQ"
-    , "wQ wB1-"
-    , "bS1 -bQ"
-    , "wA1 /wB1"
-    , "bB1 \bS1"
-    , "wB2 /wG1"
-    , "bB1 -bQ"
-    ]
+-- jank = fromRight $ applyMovesToGame [Move wS1 (Axial 0 0),Move bB1 (Axial 0 (-1)),Move wP (Axial 0 1),Move bB2 (Axial 0 (-2)),Move wS2 (Axial (-1) 2),Move bS1 (Axial (-1) (-1)),Move wQ (Axial 1 0),Move bQ (Axial (-2) (-1)),Move wA1 (Axial (-1) 1),Move bB2 (Axial (-1) (-1)),Move wG1 (Axial (-2) 1),Move bB2 (Axial (-2) (-1))] newGame
+{- λ∫ putStrLn $ niceTranscript jank
+    wS1
+    bB1 \wS1
+    wP wS1\
+    bB2 \bB1
+    wS2 /wP
+    bS1 /bB2
+    wQ wP/
+    bQ -bS1
+    wA1 /wS1
+    bB2 -bB1
+    wG1 -wA1
+    bB2 -bB2  -- wtf is this? can't reference self!
+-}
+
+preJank = fromRight $ applyMovesToGame [Move wL (Axial 0 0),Move bM (Axial 0 1),Move wQ (Axial (-1) 0),Move bB1 (Axial (-1) 2),Move wP (Axial (-2) 0),Move bQ (Axial 0 2),Move wG1 (Axial 1 (-1)),Move bB1 (Axial 0 1),Move wA1 (Axial 2 (-2))] newGame
+jank = fromRight $ applyMovesToGame [Move wL (Axial 0 0),Move bM (Axial 0 1),Move wQ (Axial (-1) 0),Move bB1 (Axial (-1) 2),Move wP (Axial (-2) 0),Move bQ (Axial 0 2),Move wG1 (Axial 1 (-1)),Move bB1 (Axial 0 1),Move wA1 (Axial 2 (-2)),Move bB1 (Axial 0 2)] newGame
+{- λ∫ putStrLn $ niceTranscript jank
+    wL
+    bM wL\
+    wQ -wL
+    bB1 /bM
+    wP -wQ
+    bQ bB1-
+    wG1 wL/
+    bB1 \bQ
+    wA1 wG1/
+    Nothing -- then fixed self reference, but now the move just can't be relativized
+-}
+jankMove = last $ gameMoves jank
+jankRel = relativizeMove preJank jankMove
+
+-- so this is really, really sick...
+-- but we're going to parse games out of quickcheck output
+-- because it will save time debugging and because parsec is fun.
+-- niceTranscript <$> findShortestCounterExample
+findShortestCounterExample n p = minimumBy (compare `on` length . gameMoves) <$> findCounterExamples n p
+findCounterExamples n p = replicateM n (fromRight <$> findCounterExampleGame p)
+
+-- so i tried this, but it didn't work out because ghci doesn't really seem to allow threading
+-- it's a pity, parallel replicateM sounds nice
+scatterGather :: Int -> (IO a) -> IO [a]
+scatterGather n action = do
+    mvars <- replicateM n newEmptyMVar
+    forM_ mvars $ \var -> do
+        forkOS $ action >>= putMVar var
+    forM mvars $ \var -> takeMVar var
+
+findCounterExampleGame :: (Testable prop) => prop -> IO (Either ParseError Game)
+findCounterExampleGame p = scrapeGameFromResult <$> quickCheckWithResult stdArgs{maxSuccess=10000} p
+
+scrapeGameFromResult :: Result -> Either ParseError Game
+scrapeGameFromResult Failure{..} = parse p_game "<QC>" output
+scrapeGameFromResult _ = Left $ newErrorMessage (Message "QC didn't return Failure, nothing to scrape!!") (initialPos "<QC>")
+
+p_game = do
+    garbageTill $ string "gameMoves = "
+    moves <- bracketed p_moves
+    pure . fromRight $ applyMovesToGame moves newGame
+garbageTill p = manyTill anyChar $ try p
+bracketed = surrounded (char '[') (char ']')
+surrounded bef aft it = bef *> it <* aft
+p_moves = p_move `sepBy` (char ',' >> many space)
+p_move = do
+    string "Move "
+    pc <- p_piece
+    string " ("
+    dest <- p_axialPoint
+    string ")"
+    pure $ Move pc dest
+p_piece = do
+    name <- choice (try . string . pieceName <$> allPieces)
+    pure . fromJust $ find (\p -> pieceName p == name) allPieces
+p_axialPoint = do
+    string "Axial "
+    p <- p_num
+    char ' '
+    q <- p_num
+    pure $ Axial p q
+p_num = read <$> (try p_neg <|> p_pos)
+p_neg = do
+    string "(-"
+    digs <- p_pos
+    string ")"
+    pure $ '-' : digs
+p_pos = many1 digit
+
 

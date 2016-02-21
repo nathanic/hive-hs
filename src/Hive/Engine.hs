@@ -345,7 +345,7 @@ newGame = Game { gameBoard = emptyBoard
                , gameMoves = []
                , gamePossibleMoves = allBoardMovesForGame newGame
                , gameSpawnPositions = [Axial 0 0]
-               , gameSpawnablePieces = filter (not . isQueenBee) $ thisTeamUnplaced newGame
+               , gameSpawnablePieces = filter (not . isQueenBee) . removeDupePieces $ thisTeamUnplaced newGame
                , gameTurn = White
                , gameState = Playing
                }
@@ -406,37 +406,47 @@ relativizeMove game move@(Move piece pos)
     | null (gameMoves game) = Just $ RelativeFirst piece
     | otherwise             = do
         -- traceM_ $ "[rM] pos: " <> show pos
+        -- XXX do we really need this?
         guard $ move `elem` allPossibleAbsoluteMoves game
-        let board = gameBoard game
         -- we can't  allow a beetle move to reference the piece underneath it
-        -- when moving off of that piece
-        let rmOrigin :: [AxialPoint] -> Maybe AxialPoint
-            rmOrigin = case findTopPieces (== piece) board of
-                            [origin] -> find (/= origin)
-                            []       -> (trace $ "spawn move: " <> show move <> "\n")
-                                        listToMaybe -- this must be a spawn move
+        -- when moving off of that piece, unless that is our only choice
+        let origBoard = gameBoard game
+            board     = case findTopPieces (== piece) origBoard of
+                            [origin] -> origBoard `removeTopPieceAt` origin
+                            []       -> origBoard
                             origins  -> error $ "found multiple origins for Piece"
                                                 <> show piece <> ": "
                                                 <> show origins <> "\n"
-        -- traceM_ $ "[rM] origin: " <> show origin
-        -- let origin = Axial 999 999 -- TEMP for testing
-        target <- rmOrigin $ occupiedNeighbors board pos
+        target <- listToMaybe $ occupiedNeighbors board pos
         -- traceM_ $ "[rM] target: " <> show target
-        targetPiece <- topPieceAt board target
+        targetPiece <- board `topPieceAt` target
         -- traceM_ $ "[rM] targetPiece: " <> show targetPiece
         dir <- Grid.findDirectionFromAxialPoints target pos
         -- traceM_ $ "[rM] dir: " <> show dir
         pure $ RelativeMove piece targetPiece dir
 
-transcript :: Game -> [Maybe RelativeMove]
-transcript Game{gameMoves=[]}        = []
-transcript Game{gameMoves=[m]}       = [relativizeMove newGame m]
-transcript game                      =
-    [ (trace $ "\ng = " <> show (gameMoves g) <> "\n" <> " nextMove = " <> show nextMove <> "\n")
-      relativizeMove g nextMove | (g, g') <- zip games (tail games)
-                                , let nextMove = last . gameMoves $ g' ]
+
+decomposeGameWithMoves :: Game -> [(Game,AbsoluteMove)]
+decomposeGameWithMoves Game{gameMoves=[]} = []
+decomposeGameWithMoves game               = [ (g, nextMove)
+                                                | (g, g') <- zip games (tail games)
+                                                , let nextMove = last . gameMoves $ g' ]
   where
     games = newGame : decomposeGame game
+
+
+decomposeGameWithTranscript :: Game -> [(Game,Maybe RelativeMove)]
+decomposeGameWithTranscript g = map (\(g,am) -> (g, relativizeMove g am)) $ decomposeGameWithMoves g
+
+transcript :: Game -> [Maybe RelativeMove]
+transcript g = map (uncurry relativizeMove) $ decomposeGameWithMoves g
+-- transcript Game{gameMoves=[]} = []
+-- transcript game               =
+--     [ (trace $ "\ng = " <> show (gameMoves g) <> "\n" <> " nextMove = " <> show nextMove <> "\n")
+--       relativizeMove g nextMove | (g, g') <- zip games (tail games)
+--                                 , let nextMove = last . gameMoves $ g' ]
+--   where
+--     games = newGame : decomposeGame game
 
 
 transcript' :: Game -> [Maybe String]

@@ -49,7 +49,7 @@ gameProperties = Tasty.testGroup "QuickCheck properties"
         \ g -> sort allPieces == sort (allPiecesOnBoard (gameBoard g) <> gameUnplaced g)
     , testProperty "valid moves lead to valid boards" $
         \ Game{gameBoard=board} -> board == emptyBoard || isValidBoard board
-    , testProperty "relativized moves never reference the same piece twice, nor the piece underneath the mover" $
+    , testProperty "relativized moves never reference the same piece twice" $
         adaptPropForTranscription prop_movesDoNotSelfReference
     -- TODO: only stackable pieces are ever stacked?
     ]
@@ -130,7 +130,7 @@ transcribedGame g = Transcribed g (niceTranscript g)
 niceTranscript = unlines . map (fromMaybe "Nothing") . transcript'
 
 -- | Wrap a Game predicate to support automatic transcription
-adaptPropForTranscription :: (Game -> Bool) -> (Transcribed -> Bool)
+adaptPropForTranscription :: (Game -> Bool) -> Transcribed -> Bool
 adaptPropForTranscription p = \(Transcribed g _) -> p g
 
 instance Arbitrary Transcribed where
@@ -200,50 +200,34 @@ findCounterExamples n p = replicateM n (fromRight <$> findCounterExampleGame p)
 
 -- so i tried this, but it didn't work out because ghci doesn't really seem to allow threading
 -- it's a pity, parallel replicateM sounds nice
-scatterGather :: Int -> (IO a) -> IO [a]
+scatterGather :: Int -> IO a -> IO [a]
 scatterGather n action = do
     mvars <- replicateM n newEmptyMVar
-    forM_ mvars $ \var -> do
-        forkOS $ action >>= putMVar var
-    forM mvars $ \var -> takeMVar var
+    forM_ mvars $ \var -> forkOS $ action >>= putMVar var
+    forM mvars takeMVar
 
 findCounterExampleGame :: (Testable prop) => prop -> IO (Either ParseError Game)
 findCounterExampleGame p = scrapeGameFromResult <$> quickCheckWithResult stdArgs{maxSuccess=10000} p
 
 scrapeGameFromResult :: Result -> Either ParseError Game
-scrapeGameFromResult Failure{..} = parse p_game "<QC>" output
+scrapeGameFromResult Failure{..} = parse gameP "<QC>" output
 scrapeGameFromResult _ = Left $ newErrorMessage (Message "QC didn't return Failure, nothing to scrape!!") (initialPos "<QC>")
 
-p_game = do
+gameP = do
     garbageTill $ string "gameMoves = "
-    moves <- bracketed p_moves
+    moves <- bracketed movesP
     pure . fromRight $ applyMovesToGame moves newGame
-garbageTill p = manyTill anyChar $ try p
-bracketed = surrounded (char '[') (char ']')
-surrounded bef aft it = bef *> it <* aft
-p_moves = p_move `sepBy` (char ',' >> many space)
-p_move = do
-    string "Move "
-    pc <- p_piece
-    string " ("
-    dest <- p_axialPoint
-    string ")"
-    pure $ Move pc dest
-p_piece = do
+movesP = moveP `sepBy` (char ',' >> many space)
+moveP = Move <$ string "Move " <*> pieceP <* many1 space
+             <*> parenthesized axialPointP
+pieceP = do
     name <- choice (try . string . pieceName <$> allPieces)
     pure . fromJust $ find (\p -> pieceName p == name) allPieces
-p_axialPoint = do
-    string "Axial "
-    p <- p_num
-    char ' '
-    q <- p_num
-    pure $ Axial p q
-p_num = read <$> (try p_neg <|> p_pos)
-p_neg = do
-    string "(-"
-    digs <- p_pos
-    string ")"
-    pure $ '-' : digs
-p_pos = many1 digit
+axialPointP = Axial <$ string "Axial " <*> numP <* many1 space <*> numP
+numP = read <$> (try negP <|> many1 digit)
+  where negP = ('-' :) <$> surrounded (string "(-") (string ")") (many1 digit)
 
-
+garbageTill p = manyTill anyChar (try p) *> pure ()
+bracketed = surrounded (char '[') (char ']')
+parenthesized = surrounded (char '(') (char ')')
+surrounded bef aft it = bef *> it <* aft

@@ -1,4 +1,4 @@
-module Hive.Piece where
+module Hive.Game.Piece where
 
 data Species = Ant | Beetle | Grasshopper | Ladybug | Mosquito | Pillbug | QueenBee | Spider
   deriving (Eq,Show)

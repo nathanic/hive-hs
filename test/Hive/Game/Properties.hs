@@ -1,4 +1,4 @@
-module Hive.GameProperties
+module Hive.Game.Properties
     -- ( gameProperties )
   where
 
@@ -26,14 +26,14 @@ import Text.Parsec.Pos (initialPos)
 
 import Debug.Trace (trace)
 
-import Hive.Board
-import Hive.HexGrid (AxialPoint(..))
-import qualified Hive.HexGrid as Grid
-import Hive.Engine
-import Hive.Move
-import Hive.Piece
+import Hive.Game.Board
+import Hive.Game.HexGrid (AxialPoint(..))
+import qualified Hive.Game.HexGrid as Grid
+import Hive.Game.Engine
+import Hive.Game.Move
+import Hive.Game.Piece
 
-import Hive.TestUtil
+import Hive.Game.TestUtil
 
 
 -- other things to check:

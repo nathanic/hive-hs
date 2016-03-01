@@ -1,4 +1,4 @@
-module Hive.Board
+module Hive.Game.Board
     -- (Board
     -- , allOccupiedPositions
     -- , isOccupiedAt
@@ -14,9 +14,9 @@ module Hive.Board
     -- )
     where
 
-import Hive.Piece
-import Hive.HexGrid (AxialPoint(..))
-import qualified Hive.HexGrid as Grid
+import Hive.Game.Piece
+import Hive.Game.HexGrid (AxialPoint(..))
+import qualified Hive.Game.HexGrid as Grid
 
 import qualified Data.Graph as Graph
 import Data.List (nub)

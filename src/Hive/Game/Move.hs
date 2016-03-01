@@ -1,4 +1,4 @@
-module Hive.Move
+module Hive.Game.Move
     ( AbsoluteMove(..)
     , RelativeMove(..)
     , interpretMove
@@ -17,10 +17,10 @@ import Data.Maybe (fromJust)
 import Data.Monoid ((<>))
 import Text.ParserCombinators.Parsec
 
-import Hive.HexGrid (AxialPoint(..),Direction)
-import qualified Hive.HexGrid as Grid
-import Hive.Board
-import Hive.Piece
+import Hive.Game.HexGrid (AxialPoint(..),Direction)
+import qualified Hive.Game.HexGrid as Grid
+import Hive.Game.Board
+import Hive.Game.Piece
 
 -- | the traditional notational representation for Hive moves
 -- TODO: support special pillbug notation

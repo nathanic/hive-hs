@@ -1,5 +1,5 @@
 
-module Hive.Engine where
+module Hive.Game.Engine where
 
 import Control.Arrow ((&&&))
 import Control.Category ((>>>))
@@ -16,11 +16,11 @@ import Data.Monoid ((<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
 
-import Hive.HexGrid (AxialPoint(..))
-import qualified Hive.HexGrid as Grid
-import Hive.Piece
-import Hive.Board
-import Hive.Move
+import Hive.Game.HexGrid (AxialPoint(..))
+import qualified Hive.Game.HexGrid as Grid
+import Hive.Game.Piece
+import Hive.Game.Board
+import Hive.Game.Move
 
 import Debug.Trace
 

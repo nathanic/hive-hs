@@ -6,8 +6,8 @@ import Test.Tasty.QuickCheck
 
 import Debug.Trace (trace)
 
-import Hive.MoveBehaviors (pieceMovementSpec)
-import Hive.GameProperties (gameProperties)
+import Hive.Game.MoveBehaviors (pieceMovementSpec)
+import Hive.Game.Properties (gameProperties)
 
 -- handy commands to remember:
 -- $ stack test --file-watch

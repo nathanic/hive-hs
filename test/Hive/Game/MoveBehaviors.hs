@@ -1,4 +1,4 @@
-module Hive.MoveBehaviors
+module Hive.Game.MoveBehaviors
     -- (pieceMovementSpec)
   where
 
@@ -14,14 +14,14 @@ import Data.Monoid ((<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
 
-import Hive.Board
-import Hive.HexGrid (AxialPoint(..))
-import qualified Hive.HexGrid as Grid
-import Hive.Engine
-import Hive.Move
-import Hive.Piece
+import Hive.Game.Board
+import Hive.Game.HexGrid (AxialPoint(..))
+import qualified Hive.Game.HexGrid as Grid
+import Hive.Game.Engine
+import Hive.Game.Move
+import Hive.Game.Piece
 
-import Hive.TestUtil
+import Hive.Game.TestUtil
 
 -- figure 1.6 from PHLAC (Play Hive Like A Champion by Randy Ingersoll)
 -- demonstrating a simple gate barring direct access to position "A" at (1,1)

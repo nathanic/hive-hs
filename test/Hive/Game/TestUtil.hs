@@ -1,10 +1,10 @@
-module Hive.TestUtil where
+module Hive.Game.TestUtil where
 
 import Data.List (init)
 
-import Hive.Board
-import Hive.HexGrid (AxialPoint(..))
-import Hive.Piece
+import Hive.Game.Board
+import Hive.Game.HexGrid (AxialPoint(..))
+import Hive.Game.Piece
 
 safeDrop 0 xs = xs
 safeDrop n [] = []

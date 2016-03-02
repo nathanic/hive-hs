@@ -23,6 +23,7 @@ library
       , Hive.Game.HexGrid
       , Hive.Game.Move
       , Hive.Game.Piece
+      , Hive.Server.App
     build-depends:
         base ==4.8.*
       -- game logic just needs these
@@ -32,7 +33,9 @@ library
       , aeson
       , either
       , http-types
+      , mtl
       , servant-server
+      , stm
       , text
       , transformers
       , wai
@@ -43,7 +46,8 @@ library
     hs-source-dirs: src
     default-extensions:   DataKinds, TypeFamilies, DeriveGeneric, TypeOperators
                         , OverloadedStrings, FlexibleContexts, RecordWildCards
-        -- ghc-options: -Wall
+    other-extensions:   TemplateHaskell
+    -- ghc-options: -Wall
 
 executable hive-server
     main-is: Main.hs

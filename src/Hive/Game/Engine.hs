@@ -6,6 +6,7 @@ import Control.Category ((>>>))
 import Control.Monad (guard, foldM, when)
 import Control.Exception
 
+import Data.Either (isRight)
 import Data.List (find, nub, nubBy, delete, foldl', maximumBy, sort, inits)
 import qualified Data.List as List
 import Data.Function (on)
@@ -264,13 +265,25 @@ thisTeamUnplaced game = filter ((== gameTurn game) . pieceTeam) $ gameUnplaced g
 
 -- it would be nice if this gave feedback on exactly why the move is invalid
 isValidMove :: Game -> AbsoluteMove -> Bool
-isValidMove game Pass = True -- XXX passing is only valid if you have no possible moves
-isValidMove game (Move piece pos) =
-    gameTurn game == pieceTeam piece && (firstMove || boardMove || spawnMove)
+isValidMove g m = isRight $ validateMove g m
+
+validateMove :: Game -> AbsoluteMove -> Either String ()
+validateMove Game{..} Pass
+    | noMoves                           = Right ()
+    | otherwise                         = Left "Passing is not allowed when there are other valid moves."
   where
-    firstMove = null $ gameMoves game
-    boardMove = elem pos $ fromMaybe [] (Map.lookup piece $ gamePossibleMoves game)
-    spawnMove = elem piece (gameUnplaced game) && elem pos (gameSpawnPositions game)
+    noMoves = null gamePossibleMoves && null gameSpawnPositions
+validateMove Game{..} (Move piece pos)
+    | gameTurn /= pieceTeam piece       = Left $ "It's not your turn! The next move belongs to " 
+                                                    <> show gameTurn <> "."
+    | not legitMove                     = Left $ "Piece " <> show piece <> " cannot move/spawn there."
+    | otherwise                         = Right ()
+  where
+    legitMove = firstMove || boardMove || spawnMove
+    firstMove = null gameMoves
+    boardMove = elem pos $ fromMaybe [] (Map.lookup piece gamePossibleMoves)
+    spawnMove = elem piece gameUnplaced && elem pos gameSpawnPositions
+
 
 applyMoveToBoard :: AbsoluteMove -> Board -> Board
 applyMoveToBoard Pass board = board
@@ -282,11 +295,9 @@ applyMoveToBoard (Move piece to) board =
 
 applyMove :: AbsoluteMove -> Game -> Either String Game
 applyMove Pass game = Right game
-applyMove move@(Move piece pos) game
-    | isValidMove game move = Right game'
-    | otherwise             = Left $ "invalid move: " <> show move
-                                        <> "\ngame for invalid move: " <> show game
-                                        <> "\n"
+applyMove move@(Move piece pos) game = do
+    validateMove game move
+    return game'
   where
     Game { gameBoard = board
          , gameMoves = history

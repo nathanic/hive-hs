@@ -1,5 +1,3 @@
-{-# LANGUAGE TemplateHaskell #-}
-
 {-
  - TODOS
  -  user management, maybe https://github.com/agrafix/users
@@ -15,7 +13,7 @@ module Hive.Server.App
     ( startApp
     ) where
 
-import Control.Concurrent           (MVar, newMVar, modifyMVar, modifyMVar_, readMVar)
+import Control.Concurrent.STM
 import Control.Monad.IO.Class
 import Control.Monad.Reader         (ask, asks, ReaderT, runReaderT, lift)
 import Control.Monad.Trans.Either
@@ -33,24 +31,7 @@ import Network.Wai.Handler.Warp
 
 import Servant
 
-
-type AppM = ReaderT Config (EitherT ServantErr IO)
-
-data Config = Config { userDB :: MVar [User]
--- okay, to start out there will be no backing store
--- we'll just have a list of Games in memory
--- we'll also need to know extra things about a game,
--- such as the websockets of connected clients so we can notify on state changes
-                     }
-
-
-data User = User
-  { userId        :: Int
-  , userFirstName :: String
-  , userLastName  :: String
-  } deriving (Eq, Show)
-
-$(deriveJSON defaultOptions ''User)
+import Hive.Server.Types
 
 type API = "users" :> QueryParam "firstName" String
                    :> QueryParam "lastName" String
@@ -82,7 +63,7 @@ getUser uid = do
 makeUser :: User -> AppM User
 makeUser user = do
     refUsers <- asks userDB
-    liftIO $ modifyMVar_ refUsers (return . (user :))
+    liftIO $ atomically $ modifyTVar refUsers (user :)
     return user
 
 
@@ -97,7 +78,7 @@ readerServer cfg = enter transmonadify server
 
 startApp :: IO ()
 startApp = do
-    ref <- newMVar initialUsers
+    ref <- newTVarIO initialUsers
     run 31337 $
         serve api (readerServer Config { userDB = ref })
   where
@@ -112,5 +93,5 @@ startApp = do
 readUsers :: AppM [User]
 readUsers = readMVar' =<< asks userDB
 
-readMVar' :: (MonadIO m) => MVar a -> m a
-readMVar' = liftIO . readMVar
+readMVar' :: (MonadIO m) => TVar a -> m a
+readMVar' = liftIO . readTVarIO

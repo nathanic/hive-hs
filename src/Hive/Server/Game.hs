@@ -4,56 +4,70 @@ module Hive.Server.Game where
 
 import Control.Concurrent.STM
 import Control.Monad.IO.Class
+import Control.Monad.Reader             (ask, asks, ReaderT, runReaderT, lift)
+import Control.Monad.Trans.Either
 
+import Data.ByteString.Lazy.Char8       (pack)
 import Data.Int
-import Data.Map (Map)
+import Data.Map                         (Map)
 import qualified Data.Map.Strict as Map
+import Data.Monoid                      ((<>))
 
-import System.IO.Unsafe (unsafePerformIO)
+import System.IO.Unsafe                 (unsafePerformIO)
 
+import Hive.Game.Move (AbsoluteMove)
 import Hive.Game.Engine (Game(..))
 import qualified Hive.Game.Engine as Engine
+import Hive.Server.Types
+
+import Servant (ServantErr(..), err400, err404)
+
+applyMove :: AbsoluteMove -> GameId -> AppM ()
+applyMove move gid = do
+    result <- liftIO . atomically $ do
+        mGI <- getGameInfo gid
+        case mGI of
+            Nothing -> return $ Left err404 { errBody = "No game found for id " <> pack (show gid) }
+            Just gi@GameInfo{giGame=game} ->
+                case Engine.applyMove move game of
+                    Left err    -> return $ Left
+                        err404 { errBody = "Move " <> pack (show move)
+                                            <> " is not valid for game with id "
+                                            <> pack (show gid) <> ":\n"
+                                            <> pack err
+                               }
+                    Right game' -> Right <$> updateGameInfo gid gi { giGame = game' }
+    either (lift . left) return result
 
 
--- should i have IDs in the models or not?
--- Persistent keeps them out...
-type PlayerId = Int64
-data Player = Player { playerName :: String
-                     , playerId :: Int64
-                     } deriving (Eq, Show)
-
-type GameId = Int64
-data GameInfo = GameInfo { giWhite          :: Maybe Player
-                         , giBlack          :: Maybe Player
-                         , giGame           :: Game
-                         , giAnnounceChan   :: TChan Game
-                         }
-
+--------------------------------------------------------------------------------
+-- Fake/Temporary "Storage" "Backend" that justifies all these "scare quotes"
+--------------------------------------------------------------------------------
 {-# NOINLINE gameDB #-}
 gameDB :: TVar (Map GameId GameInfo)
 gameDB = unsafePerformIO $ newTVarIO mempty
 
-createGameInfo :: (MonadIO m) => Maybe Player -> Maybe Player -> m GameId
-createGameInfo wp bp = liftIO . atomically $ do
+createGameInfo :: Maybe Player -> Maybe Player -> STM GameId
+createGameInfo wp bp = do
     chan <- newTChan
-    (gid,_) <- Map.findMax <$> readTVar gameDB
-    let gid' = gid + 1
-    modifyTVar' gameDB $ \db ->
-        let (gid,_) = Map.findMax db
-         in Map.insert gid'
-                       GameInfo { giWhite = wp
-                                , giBlack = bp
-                                , giGame = Engine.newGame
-                                , giAnnounceChan = chan
-                                }
-                       db
-    return gid'
+    gid <- nextId
+    modifyTVar' gameDB $
+         Map.insert gid GameInfo { giWhite = wp
+                                 , giBlack = bp
+                                 , giGame = Engine.newGame
+                                 , giAnnounceChan = chan
+                                 }
+    return gid
 
-getGameInfo :: (MonadIO m) => GameId -> m (Maybe GameInfo)
-getGameInfo gid = Map.lookup gid <$> liftIO (readTVarIO gameDB)
+getGameInfo :: GameId -> STM (Maybe GameInfo)
+getGameInfo gid = Map.lookup gid <$> readTVar gameDB
 
-updateGameInfo :: (MonadIO m) => GameId -> GameInfo -> m ()
-updateGameInfo gid ginfo = liftIO . atomically $
+updateGameInfo :: GameId -> GameInfo -> STM ()
+updateGameInfo gid ginfo =
     modifyTVar' gameDB $ Map.update (const (Just ginfo)) gid
+
+nextId :: STM GameId
+nextId = fromIntegral . (1 +) . Map.size <$> readTVar gameDB
+
 
 

@@ -31,6 +31,7 @@ library
       , parsec
       -- game server needs the rest
       , aeson
+      , bytestring
       , either
       , http-types
       , mtl

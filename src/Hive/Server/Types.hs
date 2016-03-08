@@ -1,4 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE FlexibleInstances #-}
+
 module Hive.Server.Types where
 
 import Control.Concurrent.STM
@@ -7,11 +9,22 @@ import Control.Monad.Trans.Either
 
 import Data.Aeson
 import Data.Aeson.TH
+import Data.Hashable                (Hashable)
+import qualified Data.HashMap.Strict as H
 import Data.Int
+import Data.Map                     (Map)
+import qualified Data.Map as Map
+import Data.Maybe                   (fromJust)
+import Data.Text                    (pack)
 
 import Servant (ServantErr)
 
-import Hive.Game.Engine (Game(..))
+-- TODO: make some kind of roll-up package Hive.Game that re-exports the public stuff
+import Hive.Game.Board              (Board(..))
+import Hive.Game.Move               (AbsoluteMove(..))
+import Hive.Game.HexGrid            (AxialPoint(..))
+import Hive.Game.Piece              (Piece(..), Team(..), piece)
+import Hive.Game.Engine             (Game(..),GameState(..))
 
 -- should i have IDs in the models or not?
 -- Persistent keeps them out...
@@ -45,5 +58,49 @@ data User = User
   } deriving (Eq, Show)
 
 $(deriveJSON defaultOptions ''User)
+
+$(deriveJSON defaultOptions ''AxialPoint)
+-- $(deriveJSON defaultOptions ''Piece)
+$(deriveJSON defaultOptions ''Team)
+$(deriveJSON defaultOptions ''Board)
+$(deriveJSON defaultOptions ''AbsoluteMove)
+$(deriveJSON defaultOptions ''GameState)
+$(deriveJSON defaultOptions ''Game)
+
+instance ToJSON Piece where
+    toJSON p = toJSON $ pieceName p
+
+instance FromJSON Piece where
+    parseJSON = (piece <$>) . parseJSON
+
+instance ToJSON a => ToJSON (Map Piece a) where
+    toJSON = Object . mapHashKeyVal (pack . show) toJSON
+
+instance FromJSON a => FromJSON (Map Piece a) where
+    -- TODO: validate that this is a legit piece
+    parseJSON = fmap (hashMapKey piece) . parseJSON
+
+instance ToJSON a => ToJSON (Map AxialPoint a) where
+    toJSON = Object . mapHashKeyVal (pack . show) toJSON
+
+instance FromJSON a => FromJSON (Map AxialPoint a) where
+    parseJSON = fmap (hashMapKey shittyParse) . parseJSON
+      where
+        shittyParse s = let [p,q] = read s
+                         in Axial p q
+
+
+-- | Transform a 'M.Map' into a 'H.HashMap' while transforming the keys.
+-- (ganked directly from Data.Aeson.Functions in service of yak-shavery)
+mapHashKeyVal :: (Eq k2, Hashable k2) => (k1 -> k2) -> (v1 -> v2)
+              -> Map k1 v1 -> H.HashMap k2 v2
+mapHashKeyVal fk kv = Map.foldrWithKey (\k v -> H.insert (fk k) (kv v)) H.empty
+
+-- | Transform a 'M.Map' into a 'H.HashMap' while transforming the keys.
+-- (also ganked directly from Data.Aeson.Functions)
+hashMapKey :: (Ord k2) => (k1 -> k2)
+           -> H.HashMap k1 v -> Map k2 v
+hashMapKey kv = H.foldrWithKey (Map.insert . kv) Map.empty
+{-# INLINE hashMapKey #-}
 
 

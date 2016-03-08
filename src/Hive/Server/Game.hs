@@ -2,22 +2,34 @@ module Hive.Server.Game where
 
 -- game state management stuff
 
+import Control.Concurrent               (forkIO)
 import Control.Concurrent.STM
+import Control.Monad                    (forever)
 import Control.Monad.IO.Class
 import Control.Monad.Reader             (ask, asks, ReaderT, runReaderT, lift)
 import Control.Monad.Trans              (MonadTrans)
 import Control.Monad.Trans.Either
 
-import Data.ByteString.Lazy.Char8       (pack)
+import qualified Data.Aeson as JSON
+import qualified Data.ByteString.Lazy.Char8 as LBS
 import Data.Int
 import Data.Map                         (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe                       (fromJust)
 import Data.Monoid                      ((<>))
+import Data.Text
+
+
+import           Network.HTTP.Types     (status400)
+import qualified Network.WebSockets             as WS
+import qualified Network.Wai                    as Wai
+import qualified Network.Wai.Handler.WebSockets as WaiSock
+
 
 import System.IO.Unsafe                 (unsafePerformIO)
 
-import Hive.Game.Move (AbsoluteMove)
-import Hive.Game.Engine (Game(..))
+import Hive.Game.Move                   (AbsoluteMove)
+import Hive.Game.Engine                 (Game(..))
 import qualified Hive.Game.Engine as Engine
 import Hive.Server.Types
 
@@ -27,7 +39,7 @@ type GameAPI = "game" :> Capture "gameid" GameId :>
                 ( Get '[JSON] Game
                   :<|> "join" :> Post '[JSON] Game
                   :<|> ReqBody '[JSON] AbsoluteMove :> Post '[JSON] Game
-                  -- :<|> "announce" :> Raw
+                  :<|> "announce" :> Raw
                 )
 
 api :: Proxy GameAPI
@@ -37,7 +49,7 @@ gameServer :: ServerT GameAPI AppM
 gameServer gid = getGame gid
             :<|> joinGame gid
             :<|> applyMove gid
-            -- :<|> announceSocket gid
+            :<|> announceSocket gid
 
 getGame :: GameId -> AppM Game
 -- getGame gid = lift . either left (right . giGame) =<< latomically (getGameInfo' gid)
@@ -51,6 +63,14 @@ getGame gid = do
 requestPlayer :: AppM Player
 requestPlayer = return $ Player "nobody" 1
 
+notifyGameState :: GameId -> AppM ()
+notifyGameState gid =
+    latomically $ do
+        mGI <- getGameInfo gid
+        case mGI of
+            Nothing -> return ()
+            Just GameInfo{..} -> writeTChan giAnnounceChan giGame
+
 -- XXX what about observers? we probably want to support that
 joinGame :: GameId -> AppM Game
 joinGame gid = do
@@ -60,9 +80,8 @@ joinGame gid = do
             (Nothing, _) -> return gi { giWhite = Just player }
             (_, Nothing) -> return gi { giBlack = Just player }
             _            -> left err400 { errBody = "Game is full." }
+    notifyGameState gid
     return $ giGame gi
-    -- TODO: notify other connected clients
-
 
 applyMove :: GameId -> AbsoluteMove -> AppM Game
 applyMove gid move =
@@ -74,48 +93,40 @@ applyMove gid move =
   where
     -- not sure i like this error mapping business
     errify :: Either String a -> Either ServantErr a
-    errify (Left err) = Left err404 { errBody = "Move " <> pack (show move)
+    errify (Left err) = Left err404 { errBody = "Move " <> LBS.pack (show move)
                                                 <> " is not valid for game with id "
-                                                <> pack (show gid) <> ":\n"
-                                                <> pack err
+                                                <> LBS.pack (show gid) <> ":\n"
+                                                <> LBS.pack err
                                     }
     errify (Right x) = Right x
-    -- maybe pull out a general one for Either String :~> Either ServantError
-    -- webify :: STM (Either String a) -> IO (Either ServantErr a)
-    -- webify tx = do
-    --     result <- atomically tx
-    --     return $ case result of
-    --         Left err -> Left err404 { errBody = "Move " <> pack (show move)
-    --                                             <> " is not valid for game with id "
-    --                                             <> pack (show gid) <> ":\n"
-    --                                             <> pack err
-    --                                 }
-    --         -- feels weird but we have to re-Right this to change the left-type
-    --         Right x        -> Right x
 
+instance WS.WebSocketsData Game where
+    toLazyByteString = JSON.encode
+    fromLazyByteString = fromJust . JSON.decode
 
-
--- applyMove :: GameId -> AbsoluteMove -> AppM Game
--- applyMove gid move = do
---     result <- latomically $ do
---         mGI <- getGameInfo gid
---         case mGI of
---             Nothing -> return $ Left err404 { errBody = "No game found for id " <> pack (show gid) }
---             Just gi@GameInfo{giGame=game} ->
---                 case Engine.applyMove move game of
---                     Left err    -> return $ Left
---                         err404 { errBody = "Move " <> pack (show move)
---                                             <> " is not valid for game with id "
---                                             <> pack (show gid) <> ":\n"
---                                             <> pack err
---                                }
---                     Right game' -> Right <$> updateGameInfo gid gi { giGame = game' }
---     either (lift . left) pure result
+announceSocket :: GameId -> Wai.Application
+announceSocket gid = WaiSock.websocketsOr WS.defaultConnectionOptions app errorApp
+  where
+    errorApp _ respond = respond $ Wai.responseLBS status400 [] "Sorry bub, this is a WebSocket endpoint."
+    app pending = do
+        conn <- WS.acceptRequest pending
+        WS.forkPingThread conn 30
+        mGI <- atomically $ getGameInfo gid
+        case mGI of
+            Nothing -> WS.sendClose conn ("No such game ID." :: Text)
+            Just gi -> do
+                chan <- atomically $ dupTChan (giAnnounceChan gi)
+                -- shovel data until we get an exception that closes the socket
+                -- (or at least i hope it works that way...)
+                forkIO $ forever (atomically (readTChan chan) >>= WS.sendTextData conn)
+                return ()
 
 
 --------------------------------------------------------------------------------
 -- Fake/Temporary "Storage" "Backend" that justifies all these "scare quotes"
 --------------------------------------------------------------------------------
+
+-- XXX instead of putting this into a hacky global, need to stash this in AppM
 {-# NOINLINE gameDB #-}
 gameDB :: TVar (Map GameId GameInfo)
 gameDB = unsafePerformIO $ newTVarIO mempty
@@ -138,7 +149,7 @@ getGameInfo gid = Map.lookup gid <$> readTVar gameDB
 -- more concern-mixey and ugly, but also DRYer & more convenient
 getGameInfo' :: GameId -> STM (Either ServantErr GameInfo)
 getGameInfo' gid = maybe err Right <$> getGameInfo gid
-  where err = Left err404 { errBody = "No game found for id " <> pack (show gid) }
+  where err = Left err404 { errBody = "No game found for id " <> LBS.pack (show gid) }
 
 updateGameInfo :: GameId -> GameInfo -> STM GameInfo
 updateGameInfo gid ginfo = do

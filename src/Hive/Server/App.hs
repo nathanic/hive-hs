@@ -32,8 +32,11 @@ import Network.Wai.Handler.Warp
 import Servant
 
 import Hive.Server.Types
+import Hive.Server.Game (announceServerOr, gameServer, GameAPI(..))
 
-type API = "users" :> QueryParam "firstName" String
+type API = UserAPI :<|> GameAPI
+
+type UserAPI = "users" :> QueryParam "firstName" String
                    :> QueryParam "lastName" String
                    :> Get '[JSON] [User]
     :<|> "user" :> Capture "userid" Int
@@ -67,20 +70,26 @@ makeUser user = do
     return user
 
 
+userServer :: ServerT UserAPI AppM
+userServer = getUsers :<|> getUser :<|> makeUser
+
 server :: ServerT API AppM
-server = getUsers :<|> getUser :<|> makeUser
+server = userServer :<|> gameServer
 
 readerServer :: Config -> Server API
 readerServer cfg = enter transmonadify server
   where
     transmonadify :: AppM :~> EitherT ServantErr IO
-    transmonadify = Nat $ \x -> runReaderT x cfg
+    transmonadify = Nat (`runReaderT` cfg)
 
 startApp :: IO ()
 startApp = do
     ref <- newTVarIO initialUsers
+    let cfg = Config { userDB = ref }
+    putStrLn "about to call run"
     run 31337 $
-        serve api (readerServer Config { userDB = ref })
+        announceServerOr cfg $
+            serve api (readerServer cfg)
   where
     initialUsers =
         [ User 1 "Isaac" "Newton"
@@ -95,3 +104,4 @@ readUsers = readMVar' =<< asks userDB
 
 readMVar' :: (MonadIO m) => TVar a -> m a
 readMVar' = liftIO . readTVarIO
+

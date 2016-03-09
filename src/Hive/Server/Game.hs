@@ -4,6 +4,7 @@ module Hive.Server.Game where
 
 import Control.Concurrent               (forkIO)
 import Control.Concurrent.STM
+import Control.Exception
 import Control.Monad                    (forever)
 import Control.Monad.IO.Class
 import Control.Monad.Reader             (ask, asks, ReaderT, runReaderT, lift)
@@ -35,26 +36,41 @@ import Hive.Server.Types
 
 import Servant
 
-type GameAPI = "game" :> Capture "gameid" GameId :>
-                ( Get '[JSON] Game
-                  :<|> "join" :> Post '[JSON] Game
-                  :<|> ReqBody '[JSON] AbsoluteMove :> Post '[JSON] Game
-                  :<|> "announce" :> Raw
-                )
+import Text.Printf
+
+type GameAPI = "game" :> 
+                (Post '[JSON] NewGameResult
+                :<|> Capture "gameid" GameId :>
+                    (
+                        "join" :> Post '[JSON] Game
+                        :<|> ReqBody '[JSON] AbsoluteMove :> Post '[JSON] Game
+                        :<|> Get '[JSON] Game
+                    ))
 
 api :: Proxy GameAPI
 api = Proxy
 
 gameServer :: ServerT GameAPI AppM
-gameServer gid = getGame gid
-            :<|> joinGame gid
-            :<|> applyMove gid
-            :<|> announceSocket gid
+gameServer = makeGame :<|> usingGameId
+  where
+    usingGameId gid = 
+                     joinGame gid
+                :<|> applyMove gid
+                :<|> getGame gid
+
+makeGame :: AppM NewGameResult
+makeGame = do
+    liftIO $ putStrLn "in makeGame"
+    player <- requestPlayer
+    gid <- latomically $ createGameInfo (Just player) Nothing
+    liftIO $ putStrLn "made the game"
+    return NewGameResult { gameId = gid }
 
 getGame :: GameId -> AppM Game
 -- getGame gid = lift . either left (right . giGame) =<< latomically (getGameInfo' gid)
 -- getGame gid = lift . hoistEither =<< latomically (giGame <$> getGameInfo' gid)
 getGame gid = do
+    liftIO $ putStrLn ("fetching game " <> show gid)
     gi <- latomically $ getGameInfo' gid
     giGame <$> lhoistEither gi
 -- getGame gid = giGame <$> webomically err404 (getGameInfo' gid)
@@ -68,10 +84,15 @@ notifyGameState gid =
     latomically $ do
         mGI <- getGameInfo gid
         case mGI of
-            Nothing -> return ()
+            Nothing           -> return ()
             Just GameInfo{..} -> writeTChan giAnnounceChan giGame
 
 -- XXX what about observers? we probably want to support that
+-- I guess we can let anybody get a websocket into it...
+-- we don't currently reify the socket clients; we just dupe a TChan and fork a
+-- thread to shovel data out to the [write-only] socket.
+-- if we want to support private games we'll have to do an auth check,
+-- but i suppose otherwise we don't really care about their identity
 joinGame :: GameId -> AppM Game
 joinGame gid = do
     player <- requestPlayer -- TODO: make this a thing
@@ -83,13 +104,14 @@ joinGame gid = do
     notifyGameState gid
     return $ giGame gi
 
+
 applyMove :: GameId -> AbsoluteMove -> AppM Game
-applyMove gid move =
-    fmap giGame $
-        modifyGameInfo gid $ \gi -> do
-            game' <- hoistEither . errify $ Engine.applyMove move (giGame gi)
-            return gi { giGame = game' }
-    -- TODO: notify other connected clients
+applyMove gid move = do
+    gi <- modifyGameInfo gid $ \gi -> do
+        game' <- hoistEither . errify $ Engine.applyMove move (giGame gi)
+        return gi { giGame = game' }
+    notifyGameState gid
+    return $ giGame gi
   where
     -- not sure i like this error mapping business
     errify :: Either String a -> Either ServantErr a
@@ -102,23 +124,39 @@ applyMove gid move =
 
 instance WS.WebSocketsData Game where
     toLazyByteString = JSON.encode
-    fromLazyByteString = fromJust . JSON.decode
+    fromLazyByteString = error "nobody should be sending us websocket data"
+                        -- fromJust . JSON.decode
 
-announceSocket :: GameId -> Wai.Application
-announceSocket gid = WaiSock.websocketsOr WS.defaultConnectionOptions app errorApp
+instance WS.WebSocketsData GameId where
+    toLazyByteString = LBS.pack . show
+    fromLazyByteString = read . LBS.unpack
+
+announceServerOr :: Config -> Wai.Application -> Wai.Application
+announceServerOr cfg = WaiSock.websocketsOr WS.defaultConnectionOptions app
   where
-    errorApp _ respond = respond $ Wai.responseLBS status400 [] "Sorry bub, this is a WebSocket endpoint."
+    -- errorApp _ respond = respond $ Wai.responseLBS status400 [] "Sorry bub, this is a WebSocket endpoint."
     app pending = do
+        putStrLn "got a request for a websocket"
         conn <- WS.acceptRequest pending
         WS.forkPingThread conn 30
+        gid <- WS.receiveData conn
+        printf "they sent GameId %d\n" gid
         mGI <- atomically $ getGameInfo gid
+        printf "got the game info\n"
         case mGI of
-            Nothing -> WS.sendClose conn ("No such game ID." :: Text)
+            Nothing -> do
+                printf "no such game :-(\n"
+                WS.sendClose conn ("No such game ID." :: Text)
             Just gi -> do
+                printf "got the game info for reals!\n"
                 chan <- atomically $ dupTChan (giAnnounceChan gi)
                 -- shovel data until we get an exception that closes the socket
                 -- (or at least i hope it works that way...)
-                forkIO $ forever (atomically (readTChan chan) >>= WS.sendTextData conn)
+                -- forkIO $ forever (atomically (readTChan chan) >>= WS.sendTextData conn)
+                forkIO $ flip finally (printf "*** got an exception!\n\n") $ forever $ do
+                    printf "waiting to shovel some data...\n"
+                    atomically (readTChan chan) >>= WS.sendTextData conn
+                    printf "shoveled it good!\n"
                 return ()
 
 

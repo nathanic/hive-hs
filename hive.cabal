@@ -24,6 +24,8 @@ library
       , Hive.Game.Move
       , Hive.Game.Piece
       , Hive.Server.App
+      , Hive.Server.Game
+      , Hive.Server.Types
     build-depends:
         base ==4.8.*
       -- game logic just needs these

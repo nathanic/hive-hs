@@ -60,7 +60,6 @@ data User = User
 $(deriveJSON defaultOptions ''User)
 
 $(deriveJSON defaultOptions ''AxialPoint)
--- $(deriveJSON defaultOptions ''Piece)
 $(deriveJSON defaultOptions ''Team)
 $(deriveJSON defaultOptions ''Board)
 $(deriveJSON defaultOptions ''AbsoluteMove)
@@ -68,7 +67,7 @@ $(deriveJSON defaultOptions ''GameState)
 $(deriveJSON defaultOptions ''Game)
 
 instance ToJSON Piece where
-    toJSON p = toJSON $ pieceName p
+    toJSON = toJSON . pieceName
 
 instance FromJSON Piece where
     parseJSON = (piece <$>) . parseJSON
@@ -90,7 +89,7 @@ instance FromJSON a => FromJSON (Map AxialPoint a) where
                          in Axial p q
 
 
--- | Transform a 'M.Map' into a 'H.HashMap' while transforming the keys.
+-- | Transform a 'Map' into a 'HashMap' while transforming the keys.
 -- (ganked directly from Data.Aeson.Functions in service of yak-shavery)
 mapHashKeyVal :: (Eq k2, Hashable k2) => (k1 -> k2) -> (v1 -> v2)
               -> Map k1 v1 -> H.HashMap k2 v2
@@ -104,3 +103,9 @@ hashMapKey kv = H.foldrWithKey (Map.insert . kv) Map.empty
 {-# INLINE hashMapKey #-}
 
 
+
+
+-- eventually might stick some more useful stuff in here
+data NewGameResult = NewGameResult { gameId :: GameId
+                                   } deriving (Show)
+$(deriveJSON defaultOptions ''NewGameResult)

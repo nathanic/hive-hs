@@ -20,6 +20,7 @@ import Data.Maybe                       (fromJust)
 import Data.Monoid                      ((<>))
 import Data.Text
 
+import Debug.Trace
 
 import           Network.HTTP.Types     (status400)
 import qualified Network.WebSockets             as WS
@@ -38,11 +39,12 @@ import Servant
 
 import Text.Printf
 
-type GameAPI = "game" :> 
+type GameAPI = "game" :>
                 (Post '[JSON] NewGameResult
                 :<|> Capture "gameid" GameId :>
                     (
                         "join" :> Post '[JSON] Game
+                        :<|> "force" :> Post '[PlainText] Text
                         :<|> ReqBody '[JSON] AbsoluteMove :> Post '[JSON] Game
                         :<|> Get '[JSON] Game
                     ))
@@ -53,8 +55,9 @@ api = Proxy
 gameServer :: ServerT GameAPI AppM
 gameServer = makeGame :<|> usingGameId
   where
-    usingGameId gid = 
+    usingGameId gid =
                      joinGame gid
+                :<|> forceUpdate gid
                 :<|> applyMove gid
                 :<|> getGame gid
 
@@ -79,20 +82,31 @@ getGame gid = do
 requestPlayer :: AppM Player
 requestPlayer = return $ Player "nobody" 1
 
+-- traceM s = trace s (return ())
+
 notifyGameState :: GameId -> AppM ()
 notifyGameState gid =
     latomically $ do
         mGI <- getGameInfo gid
         case mGI of
-            Nothing           -> return ()
+            Nothing           -> traceM $ printf "can't notify about game %d because it doesn't exist :-(\n" gid 
             Just GameInfo{..} -> writeTChan giAnnounceChan giGame
 
+-- | debug helper to force sending a game state to all connected websockets
+forceUpdate :: GameId -> AppM Text
+forceUpdate gid = do
+    liftIO $ printf "sending out forced update on game %d\n" gid
+    notifyGameState gid
+    liftIO $ printf "sent forced update on game %d\n" gid
+    return "upwardly dated"
+
+
 -- XXX what about observers? we probably want to support that
--- I guess we can let anybody get a websocket into it...
--- we don't currently reify the socket clients; we just dupe a TChan and fork a
--- thread to shovel data out to the [write-only] socket.
--- if we want to support private games we'll have to do an auth check,
--- but i suppose otherwise we don't really care about their identity
+-- I guess we can let anybody get a websocket into it...  we don't currently
+-- reify the socket clients; we just dupe a TChan thread to shovel data out to
+-- the [write-only] socket.  if we want to support private games we'll have to
+-- do an auth check, but i suppose otherwise we don't really care about their
+-- identity
 joinGame :: GameId -> AppM Game
 joinGame gid = do
     player <- requestPlayer -- TODO: make this a thing
@@ -148,15 +162,16 @@ announceServerOr cfg = WaiSock.websocketsOr WS.defaultConnectionOptions app
                 printf "no such game :-(\n"
                 WS.sendClose conn ("No such game ID." :: Text)
             Just gi -> do
-                printf "got the game info for reals!\n"
-                chan <- atomically $ dupTChan (giAnnounceChan gi)
-                -- shovel data until we get an exception that closes the socket
-                -- (or at least i hope it works that way...)
-                -- forkIO $ forever (atomically (readTChan chan) >>= WS.sendTextData conn)
-                forkIO $ flip finally (printf "*** got an exception!\n\n") $ forever $ do
-                    printf "waiting to shovel some data...\n"
-                    atomically (readTChan chan) >>= WS.sendTextData conn
-                    printf "shoveled it good!\n"
+                printf "got the game info, sending it down the pipe \n"
+                WS.sendTextData conn (giGame gi)
+                flip finally (printf "*** got an exception!\n") $ do
+                    chan <- atomically $ dupTChan (giAnnounceChan gi)
+                    forever $ do
+                        printf $! "waiting to pick up some data...\n"
+                        g <- atomically (readTChan chan)
+                        printf $! "got the data, now sending it on the socket\n"
+                        WS.sendTextData conn g
+                        printf "shoveled it good!\n"
                 return ()
 
 

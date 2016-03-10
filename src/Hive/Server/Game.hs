@@ -40,12 +40,12 @@ import Servant
 import Text.Printf
 
 type GameAPI = "game" :>
-                (Post '[JSON] NewGameResult
+                (Header "Authorization" FakeAuth :> Post '[JSON] NewGameResult
                 :<|> Capture "gameid" GameId :>
                     (
-                        "join" :> Post '[JSON] Game
+                        Header "Authorization" FakeAuth :> "join" :> Post '[JSON] Game
                         :<|> "force" :> Post '[PlainText] Text
-                        :<|> ReqBody '[JSON] AbsoluteMove :> Post '[JSON] Game
+                        :<|> Header "Authorization" FakeAuth :> ReqBody '[JSON] AbsoluteMove :> Post '[JSON] Game
                         :<|> Get '[JSON] Game
                     ))
 
@@ -61,10 +61,10 @@ gameServer = makeGame :<|> usingGameId
                 :<|> applyMove gid
                 :<|> getGame gid
 
-makeGame :: AppM NewGameResult
-makeGame = do
+makeGame :: Maybe FakeAuth -> AppM NewGameResult
+makeGame mAuth = do
     liftIO $ putStrLn "in makeGame"
-    player <- requestPlayer
+    player <- requestPlayer mAuth
     gid <- latomically $ createGameInfo (Just player) Nothing
     liftIO $ putStrLn "made the game"
     return NewGameResult { gameId = gid }
@@ -79,8 +79,9 @@ getGame gid = do
 -- getGame gid = giGame <$> webomically err404 (getGameInfo' gid)
 
 -- stub
-requestPlayer :: AppM Player
-requestPlayer = return $ Player "nobody" 1
+requestPlayer :: Maybe FakeAuth -> AppM Player
+requestPlayer (Just (FakeAuth name)) = return $ Player name 1
+requestPlayer Nothing                = lift $ left err404 { errBody = "This endpoint requires authorization!" }
 
 -- traceM s = trace s (return ())
 
@@ -107,9 +108,9 @@ forceUpdate gid = do
 -- the [write-only] socket.  if we want to support private games we'll have to
 -- do an auth check, but i suppose otherwise we don't really care about their
 -- identity
-joinGame :: GameId -> AppM Game
-joinGame gid = do
-    player <- requestPlayer -- TODO: make this a thing
+joinGame :: GameId -> Maybe FakeAuth -> AppM Game
+joinGame gid mAuth = do
+    player <- requestPlayer mAuth
     gi <- modifyGameInfo gid $ \gi@GameInfo{..} ->
         case (giWhite, giBlack) of
             (Nothing, _) -> return gi { giWhite = Just player }
@@ -119,8 +120,10 @@ joinGame gid = do
     return $ giGame gi
 
 
-applyMove :: GameId -> AbsoluteMove -> AppM Game
-applyMove gid move = do
+applyMove :: GameId -> Maybe FakeAuth -> AbsoluteMove -> AppM Game
+applyMove gid mAuth move = do
+    player <- requestPlayer mAuth
+    -- XXX need to check that this player is the right one to make this move
     gi <- modifyGameInfo gid $ \gi -> do
         game' <- hoistEither . errify $ Engine.applyMove move (giGame gi)
         return gi { giGame = game' }

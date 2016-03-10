@@ -15,9 +15,10 @@ import Data.Int
 import Data.Map                     (Map)
 import qualified Data.Map as Map
 import Data.Maybe                   (fromJust)
-import Data.Text                    (pack)
+import Data.Text (Text(..))
+import qualified Data.Text as T
 
-import Servant (ServantErr)
+import Servant
 
 -- TODO: make some kind of roll-up package Hive.Game that re-exports the public stuff
 import Hive.Game.Board              (Board(..))
@@ -29,7 +30,7 @@ import Hive.Game.Engine             (Game(..),GameState(..))
 -- should i have IDs in the models or not?
 -- Persistent keeps them out...
 type PlayerId = Int64
-data Player = Player { playerName :: String
+data Player = Player { playerName :: Text
                      , playerId :: Int64
                      } deriving (Eq, Show)
 
@@ -73,14 +74,14 @@ instance FromJSON Piece where
     parseJSON = (piece <$>) . parseJSON
 
 instance ToJSON a => ToJSON (Map Piece a) where
-    toJSON = Object . mapHashKeyVal (pack . show) toJSON
+    toJSON = Object . mapHashKeyVal (T.pack . show) toJSON
 
 instance FromJSON a => FromJSON (Map Piece a) where
     -- TODO: validate that this is a legit piece
     parseJSON = fmap (hashMapKey piece) . parseJSON
 
 instance ToJSON a => ToJSON (Map AxialPoint a) where
-    toJSON = Object . mapHashKeyVal (pack . show) toJSON
+    toJSON = Object . mapHashKeyVal (T.pack . show) toJSON
 
 instance FromJSON a => FromJSON (Map AxialPoint a) where
     parseJSON = fmap (hashMapKey shittyParse) . parseJSON
@@ -109,3 +110,14 @@ hashMapKey kv = H.foldrWithKey (Map.insert . kv) Map.empty
 data NewGameResult = NewGameResult { gameId :: GameId
                                    } deriving (Show)
 $(deriveJSON defaultOptions ''NewGameResult)
+
+
+newtype FakeAuth = FakeAuth Text -- ^ username
+    deriving (Eq, Ord, Show)
+
+
+instance FromText FakeAuth where
+    fromText t = case T.words (T.strip t) of
+                      "Fake":r:_ -> Just $ FakeAuth r
+                      _          -> Nothing
+

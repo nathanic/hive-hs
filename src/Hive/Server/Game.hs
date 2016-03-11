@@ -33,6 +33,7 @@ import System.IO.Unsafe                 (unsafePerformIO)
 import Hive.Game.Move                   (AbsoluteMove)
 import Hive.Game.Engine                 (Game(..))
 import qualified Hive.Game.Engine as Engine
+import Hive.Game.Piece                  (Team(..))
 import Hive.Server.Types
 
 import Servant
@@ -78,27 +79,24 @@ getGame gid = do
     giGame <$> lhoistEither gi
 -- getGame gid = giGame <$> webomically err404 (getGameInfo' gid)
 
--- stub
+
 requestPlayer :: Maybe FakeAuth -> AppM Player
 requestPlayer (Just (FakeAuth name)) = return $ Player name 1
-requestPlayer Nothing                = lift $ left err404 { errBody = "This endpoint requires authorization!" }
+requestPlayer Nothing                = lift $ left errNoAuth
 
--- traceM s = trace s (return ())
 
 notifyGameState :: GameId -> AppM ()
 notifyGameState gid =
     latomically $ do
         mGI <- getGameInfo gid
         case mGI of
-            Nothing           -> traceM $ printf "can't notify about game %d because it doesn't exist :-(\n" gid 
+            Nothing           -> traceM $ printf "can't notify about game %d because it doesn't exist :-(\n" gid
             Just GameInfo{..} -> writeTChan giAnnounceChan giGame
 
 -- | debug helper to force sending a game state to all connected websockets
 forceUpdate :: GameId -> AppM Text
 forceUpdate gid = do
-    liftIO $ printf "sending out forced update on game %d\n" gid
     notifyGameState gid
-    liftIO $ printf "sent forced update on game %d\n" gid
     return "upwardly dated"
 
 
@@ -115,66 +113,77 @@ joinGame gid mAuth = do
         case (giWhite, giBlack) of
             (Nothing, _) -> return gi { giWhite = Just player }
             (_, Nothing) -> return gi { giBlack = Just player }
-            _            -> left err400 { errBody = "Game is full." }
+            _            -> left errGameIsFull
     notifyGameState gid
     return $ giGame gi
 
+teamForPlayerInGame :: Player -> GameInfo -> Maybe Team
+teamForPlayerInGame p GameInfo{ giWhite=pw, giBlack=pb }
+    | Just p == pw = Just White
+    | Just p == pb = Just Black
+    | otherwise    = Nothing
 
 applyMove :: GameId -> Maybe FakeAuth -> AbsoluteMove -> AppM Game
 applyMove gid mAuth move = do
     player <- requestPlayer mAuth
-    -- XXX need to check that this player is the right one to make this move
-    gi <- modifyGameInfo gid $ \gi -> do
-        game' <- hoistEither . errify $ Engine.applyMove move (giGame gi)
+    gi <- modifyGameInfo gid $ \gi@GameInfo{..} -> do
+        case teamForPlayerInGame player gi of
+            Nothing                       -> left errNotInGame
+            Just t | t /= gameTurn giGame -> left errNotYourTurn
+                   | otherwise            -> return ()
+        game' <- hoistEither $ errify $ Engine.applyMove move giGame
         return gi { giGame = game' }
     notifyGameState gid
     return $ giGame gi
   where
     -- not sure i like this error mapping business
     errify :: Either String a -> Either ServantErr a
-    errify (Left err) = Left err404 { errBody = "Move " <> LBS.pack (show move)
-                                                <> " is not valid for game with id "
-                                                <> LBS.pack (show gid) <> ":\n"
-                                                <> LBS.pack err
-                                    }
-    errify (Right x) = Right x
+    errify (Left err) = Left err400 { errBody = LBS.pack err }
+    errify (Right x)  = Right x
+
+
+errNoAuth = err401 { errBody = "Authorization required for this resource." }
+errGameIsFull = err400 { errBody = "Game is full." }
+errNotYourTurn = err400 { errBody = "It's not your turn, buddy!" }
+errNotInGame = err400 { errBody = "You're not in this game! \
+                                  \Do you even go to this school?"
+                      } -- 401?
+
 
 instance WS.WebSocketsData Game where
     toLazyByteString = JSON.encode
-    fromLazyByteString = error "nobody should be sending us websocket data"
+    fromLazyByteString = error "nobody should be sending us game data"
                         -- fromJust . JSON.decode
 
 instance WS.WebSocketsData GameId where
     toLazyByteString = LBS.pack . show
     fromLazyByteString = read . LBS.unpack
 
+-- pity we can't use a Raw endpoint to embed this in a route
+-- seems like Raw and Enter are incompatible
 announceServerOr :: Config -> Wai.Application -> Wai.Application
 announceServerOr cfg = WaiSock.websocketsOr WS.defaultConnectionOptions app
   where
-    -- errorApp _ respond = respond $ Wai.responseLBS status400 [] "Sorry bub, this is a WebSocket endpoint."
+    -- TODO: wss:// support?
     app pending = do
-        putStrLn "got a request for a websocket"
         conn <- WS.acceptRequest pending
         WS.forkPingThread conn 30
+        -- it'd be prettier to get the gid from the url, which is why i wish i could use Raw
+        -- i suppose i could get the Wai request and parse it my own damn self
+        -- orrrr i could make another servant app that doesn't use AppM
+        -- to capture the ID and such, also auth
+        -- and combine it somehow with the main one...
         gid <- WS.receiveData conn
-        printf "they sent GameId %d\n" gid
         mGI <- atomically $ getGameInfo gid
-        printf "got the game info\n"
         case mGI of
-            Nothing -> do
-                printf "no such game :-(\n"
+            Nothing ->
                 WS.sendClose conn ("No such game ID." :: Text)
             Just gi -> do
-                printf "got the game info, sending it down the pipe \n"
                 WS.sendTextData conn (giGame gi)
                 flip finally (printf "*** got an exception!\n") $ do
                     chan <- atomically $ dupTChan (giAnnounceChan gi)
-                    forever $ do
-                        printf $! "waiting to pick up some data...\n"
-                        g <- atomically (readTChan chan)
-                        printf $! "got the data, now sending it on the socket\n"
-                        WS.sendTextData conn g
-                        printf "shoveled it good!\n"
+                    forever $
+                        atomically (readTChan chan) >>= WS.sendTextData conn
                 return ()
 
 

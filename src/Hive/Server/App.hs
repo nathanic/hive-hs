@@ -84,10 +84,10 @@ readerServer cfg = enter transmonadify server
 
 startApp :: IO ()
 startApp = do
-    ref <- newTVarIO initialUsers
-    let cfg = Config { userDB = ref }
-    putStrLn "about to call run"
-    run 31337 $
+    cfg <- Config <$> newTVarIO initialUsers <*> newTVarIO mempty
+    let port = 31337
+    putStrLn $ "hive server listening on port " <> show port
+    run port $
         announceServerOr cfg $
             serve api (readerServer cfg)
   where

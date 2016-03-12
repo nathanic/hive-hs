@@ -28,11 +28,13 @@ library
       , Hive.Server.Types
     build-depends:
         base ==4.8.*
-      -- game logic just needs these
+        -- game logic just needs these
       , containers
       , parsec
-      -- game server needs the rest
+        -- game server needs the rest
       , aeson
+        -- might not really need aeson-qq
+      , aeson-qq
       , bytestring
       , either
       , hashable

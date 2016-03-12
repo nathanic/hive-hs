@@ -5,6 +5,7 @@ module Hive.Server.Types where
 
 import Control.Concurrent.STM
 import Control.Monad.Reader         (ask, asks, ReaderT, runReaderT, lift)
+import Control.Monad.Trans
 import Control.Monad.Trans.Either
 
 import Data.Aeson
@@ -43,12 +44,25 @@ data GameInfo = GameInfo { giWhite          :: Maybe Player
 
 
 type AppM = ReaderT Config (EitherT ServantErr IO)
+type AppSTM = ReaderT Config (EitherT ServantErr STM)
+
+runApp :: Config -> AppM a -> IO (Either ServantErr a)
+runApp cfg app = runEitherT (runReaderT app cfg)
+
+liftSTM :: STM a -> AppSTM a
+liftSTM = lift . lift
+
+-- | like `atomically` but for our custom monad stacks
+apptomically :: AppSTM a -> AppM a
+apptomically stmAct = do
+    context <- ask
+    result <- liftIO $ atomically $ runEitherT $ runReaderT stmAct context
+    lift . hoistEither $ result
+
+type GameDB = TVar (Map GameId GameInfo)
 
 data Config = Config { userDB :: TVar [User]
--- okay, to start out there will be no backing store
--- we'll just have a list of Games in memory
--- we'll also need to know extra things about a game,
--- such as the websockets of connected clients so we can notify on state changes
+                     , gameDB :: GameDB
                      }
 
 

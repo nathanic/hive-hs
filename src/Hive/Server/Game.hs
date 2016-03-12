@@ -1,7 +1,7 @@
+-- | The Game Server. Servant API & state management
 module Hive.Server.Game where
 
--- game state management stuff
-
+-- imports {{{
 import Control.Concurrent               (forkIO)
 import Control.Concurrent.STM
 import Control.Exception
@@ -16,7 +16,7 @@ import qualified Data.ByteString.Lazy.Char8 as LBS
 import Data.Int
 import Data.Map                         (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe                       (fromJust)
+import Data.Maybe                       (fromJust, fromMaybe)
 import Data.Monoid                      ((<>))
 import Data.Text
 
@@ -28,8 +28,6 @@ import qualified Network.Wai                    as Wai
 import qualified Network.Wai.Handler.WebSockets as WaiSock
 
 
-import System.IO.Unsafe                 (unsafePerformIO)
-
 import Hive.Game.Move                   (AbsoluteMove)
 import Hive.Game.Engine                 (Game(..))
 import qualified Hive.Game.Engine as Engine
@@ -39,7 +37,11 @@ import Hive.Server.Types
 import Servant
 
 import Text.Printf
+-- }}}
 
+--------------------------------------------------------------------------------
+-- Servant API {{{
+--------------------------------------------------------------------------------
 type GameAPI = "game" :>
                 (Header "Authorization" FakeAuth :> Post '[JSON] NewGameResult
                 :<|> Capture "gameid" GameId :>
@@ -66,32 +68,27 @@ makeGame :: Maybe FakeAuth -> AppM NewGameResult
 makeGame mAuth = do
     liftIO $ putStrLn "in makeGame"
     player <- requestPlayer mAuth
-    gid <- latomically $ createGameInfo (Just player) Nothing
+    gid <- apptomically $ createGameInfo (Just player) Nothing
     liftIO $ putStrLn "made the game"
     return NewGameResult { gameId = gid }
 
 getGame :: GameId -> AppM Game
--- getGame gid = lift . either left (right . giGame) =<< latomically (getGameInfo' gid)
--- getGame gid = lift . hoistEither =<< latomically (giGame <$> getGameInfo' gid)
-getGame gid = do
-    liftIO $ putStrLn ("fetching game " <> show gid)
-    gi <- latomically $ getGameInfo' gid
-    giGame <$> lhoistEither gi
--- getGame gid = giGame <$> webomically err404 (getGameInfo' gid)
-
+getGame gid = giGame <$> apptomically (getGameInfo' gid)
 
 requestPlayer :: Maybe FakeAuth -> AppM Player
 requestPlayer (Just (FakeAuth name)) = return $ Player name 1
 requestPlayer Nothing                = lift $ left errNoAuth
 
-
 notifyGameState :: GameId -> AppM ()
-notifyGameState gid =
-    latomically $ do
-        mGI <- getGameInfo gid
+notifyGameState gid = do
+    db <- asks gameDB
+    liftIO $ atomically $ do
+        mGI <- getGameInfo db gid
         case mGI of
-            Nothing           -> traceM $ printf "can't notify about game %d because it doesn't exist :-(\n" gid
-            Just GameInfo{..} -> writeTChan giAnnounceChan giGame
+            Nothing           ->
+                traceM $ printf "can't notify about game %d because it doesn't exist :-(\n" gid
+            Just GameInfo{..} ->
+                writeTChan giAnnounceChan giGame
 
 -- | debug helper to force sending a game state to all connected websockets
 forceUpdate :: GameId -> AppM Text
@@ -99,13 +96,6 @@ forceUpdate gid = do
     notifyGameState gid
     return "upwardly dated"
 
-
--- XXX what about observers? we probably want to support that
--- I guess we can let anybody get a websocket into it...  we don't currently
--- reify the socket clients; we just dupe a TChan thread to shovel data out to
--- the [write-only] socket.  if we want to support private games we'll have to
--- do an auth check, but i suppose otherwise we don't really care about their
--- identity
 joinGame :: GameId -> Maybe FakeAuth -> AppM Game
 joinGame gid mAuth = do
     player <- requestPlayer mAuth
@@ -113,7 +103,7 @@ joinGame gid mAuth = do
         case (giWhite, giBlack) of
             (Nothing, _) -> return gi { giWhite = Just player }
             (_, Nothing) -> return gi { giBlack = Just player }
-            _            -> left errGameIsFull
+            _            -> lift $ left errGameIsFull
     notifyGameState gid
     return $ giGame gi
 
@@ -128,16 +118,14 @@ applyMove gid mAuth move = do
     player <- requestPlayer mAuth
     gi <- modifyGameInfo gid $ \gi@GameInfo{..} -> do
         case teamForPlayerInGame player gi of
-            Nothing                       -> left errNotInGame
-            Just t | t /= gameTurn giGame -> left errNotYourTurn
+            Nothing                       -> lift $ left errNotInGame
+            Just t | t /= gameTurn giGame -> lift $ left errNotYourTurn
                    | otherwise            -> return ()
-        game' <- hoistEither $ errify $ Engine.applyMove move giGame
+        game' <- lift $ hoistEither $ errify $ Engine.applyMove move giGame
         return gi { giGame = game' }
     notifyGameState gid
     return $ giGame gi
   where
-    -- not sure i like this error mapping business
-    errify :: Either String a -> Either ServantErr a
     errify (Left err) = Left err400 { errBody = LBS.pack err }
     errify (Right x)  = Right x
 
@@ -149,7 +137,11 @@ errNotInGame = err400 { errBody = "You're not in this game! \
                                   \Do you even go to this school?"
                       } -- 401?
 
+-- }}}
 
+--------------------------------------------------------------------------------
+-- Websocket stuff {{{
+--------------------------------------------------------------------------------
 instance WS.WebSocketsData Game where
     toLazyByteString = JSON.encode
     fromLazyByteString = error "nobody should be sending us game data"
@@ -174,7 +166,7 @@ announceServerOr cfg = WaiSock.websocketsOr WS.defaultConnectionOptions app
         -- to capture the ID and such, also auth
         -- and combine it somehow with the main one...
         gid <- WS.receiveData conn
-        mGI <- atomically $ getGameInfo gid
+        mGI <- atomically $ getGameInfo (gameDB cfg) gid
         case mGI of
             Nothing ->
                 WS.sendClose conn ("No such game ID." :: Text)
@@ -186,21 +178,19 @@ announceServerOr cfg = WaiSock.websocketsOr WS.defaultConnectionOptions app
                         atomically (readTChan chan) >>= WS.sendTextData conn
                 return ()
 
-
+-- }}}
 --------------------------------------------------------------------------------
--- Fake/Temporary "Storage" "Backend" that justifies all these "scare quotes"
+-- Fake "Storage" "Backend" that justifies all these "scare quotes" {{{
 --------------------------------------------------------------------------------
 
 -- XXX instead of putting this into a hacky global, need to stash this in AppM
-{-# NOINLINE gameDB #-}
-gameDB :: TVar (Map GameId GameInfo)
-gameDB = unsafePerformIO $ newTVarIO mempty
 
-createGameInfo :: Maybe Player -> Maybe Player -> STM GameId
+createGameInfo :: Maybe Player -> Maybe Player -> AppSTM GameId
 createGameInfo wp bp = do
-    chan <- newTChan
+    chan <- liftSTM newTChan
     gid <- nextId
-    modifyTVar' gameDB $
+    db <- asks gameDB
+    liftSTM $ modifyTVar' db $
          Map.insert gid GameInfo { giWhite = wp
                                  , giBlack = bp
                                  , giGame = Engine.newGame
@@ -208,53 +198,39 @@ createGameInfo wp bp = do
                                  }
     return gid
 
-getGameInfo :: GameId -> STM (Maybe GameInfo)
-getGameInfo gid = Map.lookup gid <$> readTVar gameDB
+-- | plain STM version
+getGameInfo :: GameDB -> GameId -> STM (Maybe GameInfo)
+getGameInfo gameDB gid = Map.lookup gid <$> readTVar gameDB
 
--- more concern-mixey and ugly, but also DRYer & more convenient
-getGameInfo' :: GameId -> STM (Either ServantErr GameInfo)
-getGameInfo' gid = maybe err Right <$> getGameInfo gid
-  where err = Left err404 { errBody = "No game found for id " <> LBS.pack (show gid) }
+-- | AppSTM version
+getGameInfo' :: GameId -> AppSTM GameInfo
+getGameInfo' gid = do
+    db <- asks gameDB
+    mGI <- liftSTM (getGameInfo db gid)
+    lift $ hoistEither $ maybe err Right mGI
+  where err = Left err404 { errBody = "No game found for id "
+                                        <> LBS.pack (show gid)
+                          }
 
-updateGameInfo :: GameId -> GameInfo -> STM GameInfo
+updateGameInfo :: GameId -> GameInfo -> AppSTM GameInfo
 updateGameInfo gid ginfo = do
-    modifyTVar' gameDB $ Map.update (const (Just ginfo)) gid
+    db <- asks gameDB
+    liftSTM $ modifyTVar' db $ Map.update (const (Just ginfo)) gid
     return ginfo
 
-nextId :: STM GameId
-nextId = fromIntegral . (1 +) . Map.size <$> readTVar gameDB
 
-
---------------------------------------------------------------------------------
--- Weird Little Helpers
---------------------------------------------------------------------------------
-lhoistEither :: (Monad m, MonadTrans t) => Either e a -> t (EitherT e m) a
-lhoistEither = lift . hoistEither
-
-latomically :: MonadIO m => STM a -> m a
-latomically = liftIO . atomically
-
--- | Little helper to run STM transactions between our two main EitherT-bearing monad stacks
-eitomically :: EitherT ServantErr STM a -> AppM a
-eitomically esAction = lhoistEither =<< latomically (runEitherT esAction)
-
--- | Run an EitherT ServantErr STM transaction against the given GameInfo
-modifyGameInfo :: GameId -> (GameInfo -> EitherT ServantErr STM GameInfo) -> AppM GameInfo
-modifyGameInfo gid action =
-    eitomically $ do
-        gi <- EitherT (getGameInfo' gid)
-        gi' <- action gi
-        lift $ updateGameInfo gid gi'
+modifyGameInfo :: GameId -> (GameInfo -> AppSTM GameInfo) -> AppM GameInfo
+modifyGameInfo gid mutator =
+    apptomically $ do
+        gi' <- mutator =<< getGameInfo' gid
+        updateGameInfo gid gi'
         pure gi'
 
--- webomically :: ServantErr -> STM (Either String a) -> AppM a
--- webomically serr action = lift $ mapEitherT translate
---   where
---     translate :: STM (Either String a) -> IO (Either ServantErr a)
---     translate serr tx = do
---         result <- atomically action
---         case result of
---             Left err -> Left serr { errBody = err }
---             x        -> x
+-- | super cheesy nonsense alert
+nextId :: AppSTM GameId
+nextId = fromIntegral . (1 +) . Map.size <$> readDB
 
+readDB :: AppSTM (Map GameId GameInfo)
+readDB = (liftSTM . readTVar) =<< asks gameDB
 
+--}}

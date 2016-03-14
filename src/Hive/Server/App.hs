@@ -16,7 +16,7 @@ module Hive.Server.App
 import Control.Concurrent.STM
 import Control.Monad.IO.Class
 import Control.Monad.Reader         (ask, asks, ReaderT, runReaderT, lift)
-import Control.Monad.Trans.Either
+import Control.Monad.Trans.Except
 
 import Data.Aeson
 import Data.Aeson.TH
@@ -61,7 +61,7 @@ getUser uid = do
     users <- readUsers
     case find ((== uid) . userId) users of
         Just u  -> return u
-        Nothing -> lift $ left err404 { errBody = "Dave's not here, man." }
+        Nothing -> lift $ throwE err404 { errBody = "Dave's not here, man." }
 
 makeUser :: User -> AppM User
 makeUser user = do
@@ -79,7 +79,7 @@ server = userServer :<|> gameServer
 readerServer :: Config -> Server API
 readerServer cfg = enter transmonadify server
   where
-    transmonadify :: AppM :~> EitherT ServantErr IO
+    transmonadify :: AppM :~> ExceptT ServantErr IO
     transmonadify = Nat (`runReaderT` cfg)
 
 startApp :: IO ()

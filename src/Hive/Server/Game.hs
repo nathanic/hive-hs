@@ -9,7 +9,7 @@ import Control.Monad                    (forever)
 import Control.Monad.IO.Class
 import Control.Monad.Reader             (ask, asks, ReaderT, runReaderT, lift)
 import Control.Monad.Trans              (MonadTrans)
-import Control.Monad.Trans.Either
+import Control.Monad.Trans.Except
 
 import qualified Data.Aeson as JSON
 import qualified Data.ByteString.Lazy.Char8 as LBS
@@ -66,10 +66,8 @@ gameServer = makeGame :<|> usingGameId
 
 makeGame :: Maybe FakeAuth -> AppM NewGameResult
 makeGame mAuth = do
-    liftIO $ putStrLn "in makeGame"
     player <- requestPlayer mAuth
     gid <- apptomically $ createGameInfo (Just player) Nothing
-    liftIO $ putStrLn "made the game"
     return NewGameResult { gameId = gid }
 
 getGame :: GameId -> AppM Game
@@ -77,7 +75,7 @@ getGame gid = giGame <$> apptomically (getGameInfo' gid)
 
 requestPlayer :: Maybe FakeAuth -> AppM Player
 requestPlayer (Just (FakeAuth name)) = return $ Player name 1
-requestPlayer Nothing                = lift $ left errNoAuth
+requestPlayer Nothing                = lift $ throwE errNoAuth
 
 notifyGameState :: GameId -> AppM ()
 notifyGameState gid = do
@@ -86,7 +84,8 @@ notifyGameState gid = do
         mGI <- getGameInfo db gid
         case mGI of
             Nothing           ->
-                traceM $ printf "can't notify about game %d because it doesn't exist :-(\n" gid
+                traceM $ printf "can't notify about game %d \
+                                \because it doesn't exist :-(\n" gid
             Just GameInfo{..} ->
                 writeTChan giAnnounceChan giGame
 
@@ -103,7 +102,7 @@ joinGame gid mAuth = do
         case (giWhite, giBlack) of
             (Nothing, _) -> return gi { giWhite = Just player }
             (_, Nothing) -> return gi { giBlack = Just player }
-            _            -> lift $ left errGameIsFull
+            _            -> lift $ throwE errGameIsFull
     notifyGameState gid
     return $ giGame gi
 
@@ -118,16 +117,16 @@ applyMove gid mAuth move = do
     player <- requestPlayer mAuth
     gi <- modifyGameInfo gid $ \gi@GameInfo{..} -> do
         case teamForPlayerInGame player gi of
-            Nothing                       -> lift $ left errNotInGame
-            Just t | t /= gameTurn giGame -> lift $ left errNotYourTurn
+            Nothing                       -> lift $ throwE errNotInGame
+            Just t | t /= gameTurn giGame -> lift $ throwE errNotYourTurn
                    | otherwise            -> return ()
-        game' <- lift $ hoistEither $ errify $ Engine.applyMove move giGame
+        game' <- lift . withExceptT errify . hoistEither $
+                    Engine.applyMove move giGame
         return gi { giGame = game' }
     notifyGameState gid
     return $ giGame gi
   where
-    errify (Left err) = Left err400 { errBody = LBS.pack err }
-    errify (Right x)  = Right x
+    errify err = err400 { errBody = LBS.pack err }
 
 
 errNoAuth = err401 { errBody = "Authorization required for this resource." }
@@ -201,6 +200,7 @@ createGameInfo wp bp = do
 -- | plain STM version
 getGameInfo :: GameDB -> GameId -> STM (Maybe GameInfo)
 getGameInfo gameDB gid = Map.lookup gid <$> readTVar gameDB
+
 
 -- | AppSTM version
 getGameInfo' :: GameId -> AppSTM GameInfo

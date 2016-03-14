@@ -1,11 +1,27 @@
 # For more information, see: http://docs.haskellstack.org/en/stable/yaml_configuration.html
 
 # Specifies the GHC version and set of packages available (e.g., lts-3.5, nightly-2015-09-21, ghc-7.10.2)
-resolver: lts-5.1
+resolver: lts-5.8
 
 # Local packages, usually specified by relative directory name
 packages:
 - '.'
+- location:
+    git: https://github.com/haskell-servant/servant.git
+    commit: e34003e9afc3a1bb8d0e8b056534adbcae9413ac
+  extra-dep: true
+  subdirs:
+  - servant-blaze
+  - servant-cassava
+  - servant-client
+  - servant-docs
+  - servant-examples
+  - servant-foreign
+  - servant-js
+  - servant-lucid
+  - servant-mock
+  - servant-server
+  - servant
 
 # Packages to be pulled from upstream that are not in the resolver (e.g., acme-missiles-0.3)
 extra-deps: []

@@ -6,7 +6,7 @@ module Hive.Server.Types where
 import Control.Concurrent.STM
 import Control.Monad.Reader         (ask, asks, ReaderT, runReaderT, lift)
 import Control.Monad.Trans
-import Control.Monad.Trans.Either
+import Control.Monad.Trans.Except
 
 import Data.Aeson
 import Data.Aeson.TH
@@ -17,6 +17,7 @@ import Data.Map                     (Map)
 import qualified Data.Map as Map
 import Data.Maybe                   (fromJust)
 import Data.Text (Text(..))
+import Data.Text.Encoding (decodeUtf8)
 import qualified Data.Text as T
 
 import Servant
@@ -43,11 +44,11 @@ data GameInfo = GameInfo { giWhite          :: Maybe Player
                          }
 
 
-type AppM = ReaderT Config (EitherT ServantErr IO)
-type AppSTM = ReaderT Config (EitherT ServantErr STM)
+type AppM = ReaderT Config (ExceptT ServantErr IO)
+type AppSTM = ReaderT Config (ExceptT ServantErr STM)
 
 runApp :: Config -> AppM a -> IO (Either ServantErr a)
-runApp cfg app = runEitherT (runReaderT app cfg)
+runApp cfg app = runExceptT (runReaderT app cfg)
 
 liftSTM :: STM a -> AppSTM a
 liftSTM = lift . lift
@@ -56,15 +57,14 @@ liftSTM = lift . lift
 apptomically :: AppSTM a -> AppM a
 apptomically stmAct = do
     context <- ask
-    result <- liftIO $ atomically $ runEitherT $ runReaderT stmAct context
-    lift . hoistEither $ result
+    lift $ ExceptT $ liftIO $ atomically $
+        runExceptT $ runReaderT stmAct context
 
 type GameDB = TVar (Map GameId GameInfo)
 
 data Config = Config { userDB :: TVar [User]
                      , gameDB :: GameDB
                      }
-
 
 data User = User
   { userId        :: Int
@@ -129,9 +129,12 @@ $(deriveJSON defaultOptions ''NewGameResult)
 newtype FakeAuth = FakeAuth Text -- ^ username
     deriving (Eq, Ord, Show)
 
+instance FromHttpApiData FakeAuth where
+    parseUrlPiece t =
+        case T.words $ T.strip t of
+            "Fake":r:_ -> Right (FakeAuth r)
+            _          -> Left "We only cotton to the Fake realm round these parts"
 
-instance FromText FakeAuth where
-    fromText t = case T.words (T.strip t) of
-                      "Fake":r:_ -> Just $ FakeAuth r
-                      _          -> Nothing
 
+hoistEither :: Monad m => Either e a -> ExceptT e m a
+hoistEither = ExceptT . return

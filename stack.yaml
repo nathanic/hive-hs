@@ -8,14 +8,14 @@ packages:
 - '.'
 - location:
     git: https://github.com/haskell-servant/servant.git
-    commit: e34003e9afc3a1bb8d0e8b056534adbcae9413ac
+    commit: 75da1a1b4b20934bb3141bfe23ec793d67590794
   extra-dep: true
   subdirs:
   - servant-blaze
   - servant-cassava
   - servant-client
   - servant-docs
-  - servant-examples
+  # - servant-examples
   - servant-foreign
   - servant-js
   - servant-lucid

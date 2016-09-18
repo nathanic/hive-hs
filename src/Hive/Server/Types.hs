@@ -118,8 +118,6 @@ hashMapKey kv = H.foldrWithKey (Map.insert . kv) Map.empty
 {-# INLINE hashMapKey #-}
 
 
-
-
 -- eventually might stick some more useful stuff in here
 data NewGameResult = NewGameResult { gameId :: GameId
                                    } deriving (Show)

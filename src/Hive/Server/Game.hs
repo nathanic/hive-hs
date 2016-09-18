@@ -46,9 +46,11 @@ type GameAPI = "game" :>
                 (Header "Authorization" FakeAuth :> Post '[JSON] NewGameResult
                 :<|> Capture "gameid" GameId :>
                     (
+                        -- TODO: try that new Auth stuff
                         Header "Authorization" FakeAuth :> "join" :> Post '[JSON] Game
                         :<|> "force" :> Post '[PlainText] Text
-                        :<|> Header "Authorization" FakeAuth :> ReqBody '[JSON] AbsoluteMove :> Post '[JSON] Game
+                        :<|> Header "Authorization" FakeAuth :>
+                            ReqBody '[JSON] AbsoluteMove :> Post '[JSON] Game
                         :<|> Get '[JSON] Game
                     ))
 

@@ -27,7 +27,8 @@ library
       , Hive.Server.Game
       , Hive.Server.Types
     build-depends:
-        base ==4.8.*
+        -- base ==4.8.*
+        base ==4.9.*
         -- game logic just needs these
       , containers
       , parsec
@@ -74,8 +75,8 @@ test-suite hive-test-suite
         base -any
       , containers -any
       , hive -any
-      , tasty ==0.11.0.2
-      , tasty-hspec ==1.1.2
+      , tasty ==0.11.*
+      , tasty-hspec ==1.1.*
       , tasty-quickcheck
       , QuickCheck
       , parsec

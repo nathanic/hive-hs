@@ -46,7 +46,40 @@ boardConstantContact = makeBoard [(0,0,wA1)
                                  ,(2,2,bA1)
                                  ,(2,1,bQ)
                                  ]
-boardWithDoor = undefined
+
+-- figure 4.2.1 from PHLAC
+-- bS2 gets extra moves due to a door
+boardWithDoor = makeBoard [(0,0,wA2)
+                          ,(1,0,bQ)
+                          ,(2,0,bS1)
+                          ,(3,0,bQ)
+                          ,(-1,1,bG2)
+                          ,(3,1,bA1)
+                          ,(-2,2,wG1)
+                          ,(1,2,bS2) -- the interesting piece!
+                          ,(3,2,wA1)
+                          ,(-2,3,bB1)
+                          ,(0,3,bA2)
+                          ,(2,3,bG1)
+                          ,(0,4,bG2)
+                          ,(1,4,bS1)
+                          ]
+
+-- figure 4.3.1 from PHLAC: ring makes everything but wQ free
+boardWithRing = makeBoard [(3,-1,bB1)
+                          ,(0,0,bQ)
+                          ,(1,0,wB1)
+                          ,(2,0,wQ)
+                          ,(-1,1,wG1)
+                          ,(2,1,bA1)
+                          ,(-2,2,wA1)
+                          ,(-1,2,bS2)
+                          ,(1,2,wA2)
+                          ,(-1,3,bG1)
+                          ,(1,3,bA2)
+                          ,(-1,4,wG2)
+                          ,(0,4,bS1)
+                          ]
 
 -- figure 2.18 from PHLAC
 -- upper gate blocks wP from moving wQ to (-1,2)
@@ -96,6 +129,7 @@ beetleGame = fromRight $ gameFromTranscript [ "wS1"
                                             , "bG1 -bS1"
                                             -- , "wB1 -wS1"
                                             ]
+
 
 
 
@@ -224,12 +258,18 @@ pieceMovementSpec = parallel $ do
         it "is stuck if gated in" $
             -- XXX technically this makes an unsound board since there is already a bQ placed
             -- but due to how the move calculations are implemented it *shouldn't* matter...
+            -- unclean though, and relies on too much engine knowledge
             bQ `shouldSatisfy` isStuckWhenGatedIn
     describe "Spider" $ do
-        it "normally has only 2 moves"
-            pending
-        it "gets extra moves at a door"
-            pending
+        it "normally has only 2 moves" $
+            spiderMoves boardWithRing (Axial 0 4)
+                `shouldMatchList` [ Axial 2 2, Axial (-2) 4 ]
+        it "even has 2 moves inside this ring" $
+            spiderMoves boardWithRing (Axial (-1) 2)
+                `shouldMatchList` [ Axial 0 1, Axial 0 2 ]
+        it "gets extra moves at a door" $
+            spiderMoves boardWithDoor (Axial 1 2)
+                `shouldMatchList` [ Axial 2 1, Axial (-1) 2, Axial (-1) 4, Axial (-2) 4 ]
         it "cannot pass through gates" $ do
             -- bS1 bA1-
             let board = addPiece bS1 (Axial 2 2) boardWithGate
@@ -238,4 +278,11 @@ pieceMovementSpec = parallel $ do
             wS2 `shouldSatisfy` isStuckWhenSurrounded
         it "is stuck if gated in" $
             wS2 `shouldSatisfy` isStuckWhenGatedIn
+    describe "Ring Formation" $
+        it "frees up a bunch of bugs" $
+            allFreePieces boardWithRing
+                `shouldMatchList` [bB1, bQ,  wB1, wG1
+                                  ,bA1, wA1, bS2, wA2
+                                  ,bG1, bA2, wG2, bS1
+                                  ]
 

@@ -104,6 +104,12 @@ pieceIsFree board pos = isOneHive (board `removeTopPieceAt` pos)
 allFreePiecePositions :: Board -> [AxialPoint]
 allFreePiecePositions board = filter (pieceIsFree board) $ allOccupiedPositions board
 
+allFreePieces :: Board -> [Piece]
+allFreePieces board =
+    map (fromJust . topPieceAt board) $
+    filter (pieceIsFree board) $
+    allOccupiedPositions board
+
 freePiecePositionsForTeam :: Team -> Board -> [AxialPoint]
 freePiecePositionsForTeam team board =
     filter (\p -> pieceTeam (unsafeTopPieceAt board p) == team && pieceIsFree board p)

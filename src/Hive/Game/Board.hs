@@ -105,10 +105,7 @@ allFreePiecePositions :: Board -> [AxialPoint]
 allFreePiecePositions board = filter (pieceIsFree board) $ allOccupiedPositions board
 
 allFreePieces :: Board -> [Piece]
-allFreePieces board =
-    map (fromJust . topPieceAt board) $
-    filter (pieceIsFree board) $
-    allOccupiedPositions board
+allFreePieces board = map (fromJust . topPieceAt board) $ allFreePiecePositions board
 
 freePiecePositionsForTeam :: Team -> Board -> [AxialPoint]
 freePiecePositionsForTeam team board =

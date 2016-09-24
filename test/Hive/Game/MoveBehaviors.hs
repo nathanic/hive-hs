@@ -144,6 +144,10 @@ isStuckWhenSurrounded pc = null $ movesForPieceAtPosition board gatedHex
   where board = addPiece pc gatedHex $ addPiece bB1 (Axial 2 0) boardWithGate
 
 
+containsAll :: (Show a, Eq a) => [a] -> [a] -> Bool
+containsAll haystack = all (`elem` haystack)
+
+
 pieceMovementSpec :: Spec
 pieceMovementSpec = parallel $ do
     describe "Ant" $ do
@@ -163,10 +167,28 @@ pieceMovementSpec = parallel $ do
                                   , Axial (-1) 1 -- -wQ
                                   ]
 
-        it "passes through doors"
-            pending
-        it "cannot move inside enclosed cavities"
-            pending
+        it "passes through doors" $ do
+            -- first do `bS2 -bA1` to free up bA1 at (3,1)
+            let board = movePieceTo boardWithDoor (Axial 1 2) (Axial 2 1)
+            antMoves board (Axial 3 1)
+                -- just spot checking this one
+                `shouldContainElements`
+                    [ Axial (-1) 0 -- outside
+                    , Axial 0 5 -- outside
+                    , Axial 0 1 -- inside
+                    , Axial 0 2 -- inside
+                    , Axial 1 1 -- inside
+                    , Axial 2 (-1) -- inside
+                    , Axial 1 3 -- inside
+                    , Axial (-1) 3 -- the door itself
+                    ]
+        it "cannot move inside enclosed cavities" $ do
+            -- wA1 is at (-2,2), outside of a ring
+            let moves = antMoves boardWithRing (Axial (-2) 2)
+            -- these are exterior points
+            moves `shouldContainElements` [Axial (-1) 0, Axial 0 5, Axial 3 0]
+            -- these points are inside the ring
+            moves `shouldNotContain` [Axial 0 1, Axial 0 2, Axial 0 3, Axial 1 1]
         it "is stuck if surrounded" $
             bA3 `shouldSatisfy` isStuckWhenSurrounded
         it "is stuck if gated in" $
@@ -198,8 +220,9 @@ pieceMovementSpec = parallel $ do
             relativizeMove beetleGame (Move wB1 (Axial (-1) 0))
                 `shouldNotBe` Just (RelativeMove wB1 wB1 Grid.SW)
     describe "Grasshopper" $ do
-        it "moves in straight lines only"
-            pending
+        it "moves in straight lines only" $
+            grasshopperMoves boardWithRing (Axial (-1) 1) -- wG1
+                `shouldMatchList` [Axial 1 (-1), Axial (-3) 3, Axial (-1) 5]
         it "makes exactly one hop (cannot traverse past a gap in pieces along a line)"
             pending
         it "is NOT stuck if surrounded" $
@@ -238,7 +261,7 @@ pieceMovementSpec = parallel $ do
         it "can move enemy pieces around" $ do
             let Right game' = applyTranscript [ "wB1 /wS2", "bG1 wP\\" ] pillbugGame
             -- pillbug can move bG1 to -wP
-            fromJust (Map.lookup bG1 $ gamePossibleMoves game') `shouldContain` [Axial (-2) 0]
+            fromJust (Map.lookup bG1 $ gamePossibleMoves game') `shouldContainElements` [Axial (-2) 0]
             pending
         it "can only move pieces that are at ground level" $
             fromJust (Map.lookup bB1 $ gamePossibleMoves pillbugGame) `shouldNotContain` [Axial (-1) 1]

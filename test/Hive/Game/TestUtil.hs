@@ -1,6 +1,9 @@
 module Hive.Game.TestUtil where
 
-import Data.List (init)
+import Control.Monad (unless)
+import Data.List (init, (\\))
+
+import Test.Tasty.Hspec
 
 import Hive.Game.Board
 import Hive.Game.HexGrid (AxialPoint(..))
@@ -28,4 +31,12 @@ addPieces = flip $ foldl (\b (p, q, pc) -> addPiece pc (Axial p q) b)
 
 makeBoard :: [(Int,Int,Piece)] -> Board
 makeBoard spec = addPieces spec emptyBoard
+
+
+-- surprised this one wasn't in hspec already
+shouldContainElements :: (Show a, Eq a) => [a] -> [a] -> Expectation
+shouldContainElements haystack needles = unless (null missing) (expectationFailure message)
+  where
+    missing = needles \\ haystack
+    message = "Actual list " ++ show haystack ++ " does not contain elements " ++ show missing
 

@@ -188,7 +188,7 @@ pieceMovementSpec = parallel $ do
             -- these are exterior points
             moves `shouldContainElements` [Axial (-1) 0, Axial 0 5, Axial 3 0]
             -- these points are inside the ring
-            moves `shouldNotContain` [Axial 0 1, Axial 0 2, Axial 0 3, Axial 1 1]
+            moves `shouldNotContainElements` [Axial 0 1, Axial 0 2, Axial 0 3, Axial 1 1]
         it "is stuck if surrounded" $
             bA3 `shouldSatisfy` isStuckWhenSurrounded
         it "is stuck if gated in" $
@@ -264,7 +264,7 @@ pieceMovementSpec = parallel $ do
             fromJust (Map.lookup bG1 $ gamePossibleMoves game') `shouldContainElements` [Axial (-2) 0]
             pending
         it "can only move pieces that are at ground level" $
-            fromJust (Map.lookup bB1 $ gamePossibleMoves pillbugGame) `shouldNotContain` [Axial (-1) 1]
+            fromJust (Map.lookup bB1 $ gamePossibleMoves pillbugGame) `shouldNotContainElements` [Axial (-1) 1]
         it "is stuck if surrounded" $
             bP `shouldSatisfy` isStuckWhenSurrounded
         it "is stuck if gated in" $
@@ -296,7 +296,7 @@ pieceMovementSpec = parallel $ do
         it "cannot pass through gates" $ do
             -- bS1 bA1-
             let board = addPiece bS1 (Axial 2 2) boardWithGate
-            spiderMoves board (Axial 2 2) `shouldNotContain` [gatedHex]
+            spiderMoves board (Axial 2 2) `shouldNotContainElements` [gatedHex]
         it "is stuck if surrounded" $
             wS2 `shouldSatisfy` isStuckWhenSurrounded
         it "is stuck if gated in" $

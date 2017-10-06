@@ -37,11 +37,8 @@ import Hive.Game.TestUtil
 
 
 -- other things to check:
-    -- all pieces in a ring are free?
     -- pieces covered by a beetle/mosquito are not free
     -- handling of situations where a player must pass
-    -- game is won when a queen is surrounded
-    -- game is a draw when both queens are surrounded
 
 
 gameProperties = Tasty.testGroup "QuickCheck properties"
@@ -131,7 +128,7 @@ niceTranscript = unlines . map (fromMaybe "Nothing") . transcript'
 
 -- | Wrap a Game predicate to support automatic transcription
 adaptPropForTranscription :: (Game -> Bool) -> Transcribed -> Bool
-adaptPropForTranscription p = \(Transcribed g _) -> p g
+adaptPropForTranscription p (Transcribed g _) = p g
 
 instance Arbitrary Transcribed where
     arbitrary = transcribedGame <$> arbitrary

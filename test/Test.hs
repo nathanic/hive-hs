@@ -7,6 +7,7 @@ import Test.Tasty.QuickCheck
 import Debug.Trace (trace)
 
 import Hive.Game.MoveBehaviors (pieceMovementSpec)
+import Hive.Game.GameBehaviors (gameSpec)
 import Hive.Game.Properties (gameProperties)
 
 -- handy commands to remember:
@@ -15,6 +16,7 @@ import Hive.Game.Properties (gameProperties)
 
 main :: IO ()
 main = do
-    behaviors <- testSpec "Piece Movement Behaviors" pieceMovementSpec
-    Tasty.defaultMain $ Tasty.testGroup "All Tests" [behaviors, gameProperties]
+    moveBehaviors <- testSpec "Piece Movement Behaviors" pieceMovementSpec
+    gameBehaviors <- testSpec "Game Rule Behaviors" gameSpec
+    Tasty.defaultMain $ Tasty.testGroup "All Tests" [moveBehaviors, gameBehaviors, gameProperties]
 

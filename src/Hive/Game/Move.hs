@@ -113,6 +113,7 @@ directionToOrient Grid.W = ("-","")
 directionToOrient Grid.NW = ("\\","")
 
 describeMove :: RelativeMove -> String
+describeMove RelativePass = ""
 describeMove (RelativeFirst pc) = show pc
 describeMove (RelativeMove mover target dir) = 
     show mover <> " " <> pre <> show target <> post

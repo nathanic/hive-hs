@@ -307,7 +307,7 @@ applyMove move@(Move piece pos) game = do
     game' = game { gameBoard = board'
                  , gameMoves = history <> [Move piece pos]
                  --- XXX BUG TODO it is possible, though rare, for a particular player to have no free pieces (e.g. the other player dominates the outside of the hive)
-                 -- we need a way to represent this situatino properly
+                 -- we need a way to represent this situation properly
                  -- i imagine the UI will have to show some kind of indication
                  -- that a player was force to pass, and then just move on to
                  -- the next turn for the other player.
@@ -406,8 +406,9 @@ decomposeGame origGame =
 applyMovesToGame :: [AbsoluteMove] -> Game -> Either String Game
 applyMovesToGame moves game = foldM (flip applyMove) game moves
 
+fromRight :: Either a b -> b
 fromRight (Right x) = x
-fromRight err = error "fromRight (Left _)\n"
+fromRight _ = error "fromRight (Left _)\n"
 
 -- | Convert an AbsoluteMove into a RelativeMove
 -- given a Game where that move can be played in the next turn.

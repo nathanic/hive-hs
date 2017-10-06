@@ -38,5 +38,10 @@ shouldContainElements :: (Show a, Eq a) => [a] -> [a] -> Expectation
 shouldContainElements haystack needles = unless (null missing) (expectationFailure message)
   where
     missing = needles \\ haystack
-    message = "Actual list " ++ show haystack ++ " does not contain elements " ++ show missing
+    message = "Actual list " ++ show haystack ++ " does not contain expected elements " ++ show missing
 
+shouldNotContainElements :: (Show a, Eq a) => [a] -> [a] -> Expectation
+shouldNotContainElements haystack antineedles = unless (unfound == antineedles) (expectationFailure message)
+  where
+    unfound = antineedles \\ haystack
+    message = "Actual list " ++ show haystack ++ " contains unexpected elements " ++ show unfound

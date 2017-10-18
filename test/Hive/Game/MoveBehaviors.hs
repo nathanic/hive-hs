@@ -97,6 +97,16 @@ boardWithUpperGate = makeBoard [ (0,0,bA2)
                                , (2,3,bQ)
                                ]
 
+-- testing grasshoppers
+boardForGrasshoppers = makeBoard [ (0,0,wG1)
+                                 , (0,1,wQ)
+                                 , (0,2,wQ)
+                                 -- GAP
+                                 , (0,4,wQ)
+                                 , (1,0,wQ)
+                                 , (1,2,wQ)
+                                 , (1,3,wQ)
+                                 ]
 
 
 -- an example game i came up with for testing pillbugs
@@ -144,7 +154,7 @@ isStuckWhenSurrounded pc = null $ movesForPieceAtPosition board gatedHex
   where board = addPiece pc gatedHex $ addPiece bB1 (Axial 2 0) boardWithGate
 
 
-containsAll :: (Show a, Eq a) => [a] -> [a] -> Bool
+containsAll :: (Eq a) => [a] -> [a] -> Bool
 containsAll haystack = all (`elem` haystack)
 
 
@@ -223,8 +233,9 @@ pieceMovementSpec = parallel $ do
         it "moves in straight lines only" $
             grasshopperMoves boardWithRing (Axial (-1) 1) -- wG1
                 `shouldMatchList` [Axial 1 (-1), Axial (-3) 3, Axial (-1) 5]
-        it "makes exactly one hop (cannot traverse past a gap in pieces along a line)"
-            pending
+        it "makes exactly one hop (cannot traverse past a gap in pieces along a line)" $
+            grasshopperMoves boardForGrasshoppers (Axial 0 0)
+                `shouldMatchList` [Axial 0 3, Axial 2 0]
         it "is NOT stuck if surrounded" $
             bG3 `shouldNotSatisfy` isStuckWhenSurrounded
         it "is NOT stuck if gated in" $

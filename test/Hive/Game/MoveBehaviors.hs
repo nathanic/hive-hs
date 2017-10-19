@@ -100,7 +100,7 @@ boardWithUpperGate = makeBoard [ (0,0,bA2)
 -- an S-curve of tiles, and you place your test piece at (0,0)
 -- we're cheating with all wQ here, but we know
 -- the engine won't care
-sCurve = [(0,1,wQ)
+sCurve = [ (0,1,wQ)
          , (0,2,wQ)
            -- GAP
          , (0,4,wQ)
@@ -112,6 +112,14 @@ sCurve = [(0,1,wQ)
 
 boardForGrasshoppers = makeBoard $ (0,0,wG1) : sCurve
 boardForLadybugs = makeBoard $ (0,0,wL) : sCurve
+
+boardForMosquitos = makeBoard $ [ (0,0,wM)
+                                , (0,1,bL)
+                                , (0,2,wQ)
+                                , (0,3,wQ)
+                                , (0,4,wQ)
+                                , (1,0,wG1)
+                                ]
 
 -- an example game i came up with for testing pillbugs
 pillbugGame = fromRight $ gameFromTranscript [ "wS1"
@@ -261,10 +269,20 @@ pieceMovementSpec = parallel $ do
         it "is NOT stuck if gated in" $
             wL `shouldNotSatisfy` isStuckWhenGatedIn
     describe "Mosquito" $ do
-        it "can jump like a grasshopper or move like a ladybug"
-            pending
+        it "can jump like a grasshopper or move like a ladybug" $
+            mosquitoMoves boardForMosquitos (Axial 0 0)
+              `shouldMatchList` [ Axial 0 5 -- G only
+                                , Axial 2 0 -- both
+                                , Axial (-1) 1 -- rest are ladybug
+                                , Axial (-1) 2
+                                , Axial (-1) 3
+                                , Axial 1 (-1)
+                                , Axial 1 1
+                                , Axial 1 2
+                                , Axial 2 (-1)
+                                ]
         it "can dance like a butterfly or sting like a bee" $
-            1 `shouldBe` 1
+            True `shouldBe` True
         it "has no moves when its only neighbor is another mosquito" $ do
             let board = addPieces [(2,2,wM), (3,2,bM)] boardWithGate
             mosquitoMoves board (Axial 3 2) `shouldBe` []

@@ -97,17 +97,21 @@ boardWithUpperGate = makeBoard [ (0,0,bA2)
                                , (2,3,bQ)
                                ]
 
--- testing grasshoppers
-boardForGrasshoppers = makeBoard [ (0,0,wG1)
-                                 , (0,1,wQ)
-                                 , (0,2,wQ)
-                                 -- GAP
-                                 , (0,4,wQ)
-                                 , (1,0,wQ)
-                                 , (1,2,wQ)
-                                 , (1,3,wQ)
-                                 ]
+-- an S-curve of tiles, and you place your test piece at (0,0)
+-- we're cheating with all wQ here, but we know
+-- the engine won't care
+sCurve = [(0,1,wQ)
+         , (0,2,wQ)
+           -- GAP
+         , (0,4,wQ)
+         , (1,0,wQ)
+           -- GAP
+         , (1,2,wQ)
+         , (1,3,wQ)
+         ]
 
+boardForGrasshoppers = makeBoard $ (0,0,wG1) : sCurve
+boardForLadybugs = makeBoard $ (0,0,wL) : sCurve
 
 -- an example game i came up with for testing pillbugs
 pillbugGame = fromRight $ gameFromTranscript [ "wS1"
@@ -241,8 +245,17 @@ pieceMovementSpec = parallel $ do
         it "is NOT stuck if gated in" $
             bG3 `shouldNotSatisfy` isStuckWhenGatedIn
     describe "Ladybug" $ do
-        it "goes 2 hexes on top and then must drop down"
-            pending
+        it "goes 2 hexes on top and then must drop down" $
+            ladybugMoves boardForLadybugs (Axial 0 0)
+              `shouldMatchList` [ Axial (-1) 1
+                                , Axial (-1) 2
+                                , Axial (-1) 3
+                                , Axial 0 3
+                                , Axial 1 1
+                                , Axial 1 (-1)
+                                , Axial 2 (-1)
+                                , Axial 2 0
+                                ]
         it "is NOT stuck if surrounded" $
             bL `shouldNotSatisfy` isStuckWhenSurrounded
         it "is NOT stuck if gated in" $
